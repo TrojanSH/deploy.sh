@@ -25,7 +25,7 @@ SECRET_SALT="MY_PRIVATE_PHRASE_2026" # <--- Change this for your private key gen
 VALID_KEY=$(echo -n "${HWID}${SECRET_SALT}" | md5sum | cut -c1-10 | tr '[:lower:]' '[:upper:]')
 
 echo -e "${GREEN}[+] SYSTEM HWID:${NC} $HWID"
-echo -e "${BLUE}[!] Send this HWID to @YourUsername on Telegram for activation.${NC}"
+echo -e "${BLUE}[!] Send this HWID to @Splean_tool on Telegram for activation.${NC}"
 echo " ----------------------------------------------------------------------------------"
 
 # ACTIVATION LOCK
