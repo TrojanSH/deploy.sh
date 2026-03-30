@@ -1,5 +1,5 @@
 #!/bin/bash
-# 🏛️ TROJANPAGE - SEQUENTIAL VALIDATOR (V7.2)
+# 🏛️ TROJANPAGE - SEQUENTIAL VALIDATOR + CHEAT SHEET (V7.3)
 # --------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -67,10 +67,13 @@ while true; do
     else
         echo -e "${RED}\n ------------------------------------------------"
         echo -e " [!] DNS MISMATCH: Domain is not pointing to VPS"
-        echo -e " Domain Points To: ${YELLOW}$CURRENT_DNS${NC}"
-        echo -e " VPS IP Address:   ${GREEN}$VPS_IP${NC}"
         echo -e " ------------------------------------------------${NC}"
-        echo -e "${YELLOW}Update Cloudflare A-Record to $VPS_IP (Grey Cloud/DNS Only).${NC}"
+        echo -e "${BLUE}>>> CLOUDFLARE CHEAT SHEET <<<${NC}"
+        echo -e "Type:   ${YELLOW}A${NC}"
+        echo -e "Name:   ${YELLOW}@${NC}"
+        echo -e "Value:  ${GREEN}$VPS_IP${NC}"
+        echo -e "Proxy:  ${RED}DNS ONLY (Grey Cloud)${NC}"
+        echo -e " ------------------------------------------------"
         read -p "Retry DNS check? (y/n): " DNS_RETRY
         [[ "$DNS_RETRY" != "y" ]] && exit 1
     fi
@@ -118,4 +121,4 @@ EOF
 
 chmod +x /root/run.sh
 sudo ln -sf /root/run.sh /usr/local/bin/Run
-echo -e "${GREEN}[success] Full Sequential Deployment Finished.${NC}"
+echo -e "${GREEN}[success] System Deployed. Type 'Run' to start.${NC}"
